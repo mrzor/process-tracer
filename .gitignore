@@ -7,7 +7,6 @@
 
 # Compiled Go binaries
 sched_trace
-/cmd/*/cmd
 
 # Test binary, built with `go test -c`
 *.test

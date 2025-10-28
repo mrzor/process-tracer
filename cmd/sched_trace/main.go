@@ -16,6 +16,7 @@ import (
 	"sched_trace/internal/config"
 	"sched_trace/internal/eventstream"
 	"sched_trace/internal/output"
+	"sched_trace/internal/pseudo_reverse_dns"
 )
 
 func main() {
@@ -66,8 +67,13 @@ func run() error {
 	}
 	defer rd.Close()
 
+	// Initialize pseudo reverse DNS resolver
+	resolver := pseudo_reverse_dns.New()
+	resolver.AddStaticSource(&pseudo_reverse_dns.EnvironSource{})
+	resolver.AddStaticSource(&pseudo_reverse_dns.CmdlineSource{})
+
 	// Create event stream with console formatter
-	formatter := output.NewConsoleFormatter(cfg.TraceID)
+	formatter := output.NewConsoleFormatter(cfg.TraceID, resolver)
 	stream := eventstream.New(rd, formatter)
 
 	// Create context for event stream

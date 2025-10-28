@@ -6,8 +6,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 
 	"sched_trace/internal/bpf"
+	"sched_trace/internal/pseudo_reverse_dns"
 )
 
 // EventHandler is the interface for handling BPF events
@@ -35,14 +37,16 @@ type ConsoleFormatter struct {
 	spans    map[uint32]*SpanInfo
 	tcpSpans map[uint64]*TCPSpanInfo // keyed by socket address
 	traceID  string                  // 32 hex chars
+	resolver *pseudo_reverse_dns.Resolver
 }
 
 // NewConsoleFormatter creates a new ConsoleFormatter
-func NewConsoleFormatter(traceID string) *ConsoleFormatter {
+func NewConsoleFormatter(traceID string, resolver *pseudo_reverse_dns.Resolver) *ConsoleFormatter {
 	return &ConsoleFormatter{
 		spans:    make(map[uint32]*SpanInfo),
 		tcpSpans: make(map[uint64]*TCPSpanInfo),
 		traceID:  traceID,
+		resolver: resolver,
 	}
 }
 
@@ -91,6 +95,9 @@ func (f *ConsoleFormatter) handleProcessExec(event *bpf.Event) error {
 		ParentSpanID: parentSpanID,
 		StartTime:    event.Timestamp,
 	}
+
+	// Ingest static sources for this PID (environ, cmdline)
+	f.resolver.HandleStaticSources(int(event.Pid))
 
 	return nil
 }
@@ -173,8 +180,17 @@ func (f *ConsoleFormatter) handleTCPClose(event *bpf.Event) error {
 		srcIP = fmt.Sprintf("unknown_family_%d", tcpData.Family)
 	}
 
-	fmt.Printf("type=tcp pid=%d dest_ip=%s dest_port=%d src_ip=%s src_port=%d family=%d duration=%dns tcp_span_id=%016x parent_span_id=%016x trace_id=%s\n",
-		tcpSpanInfo.Pid, destIP, tcpData.Dport, srcIP, tcpData.Sport, tcpData.Family, duration,
+	// Resolve hostnames (late resolution - called only when formatting output)
+	var destHostField, srcHostField string
+	if destHosts := f.resolver.Lookup(destIP); len(destHosts) > 0 {
+		destHostField = fmt.Sprintf(" dest_host=%s", strings.Join(destHosts, ","))
+	}
+	if srcHosts := f.resolver.Lookup(srcIP); len(srcHosts) > 0 {
+		srcHostField = fmt.Sprintf(" src_host=%s", strings.Join(srcHosts, ","))
+	}
+
+	fmt.Printf("type=tcp pid=%d dest_ip=%s dest_port=%d%s src_ip=%s src_port=%d%s family=%d duration=%dns tcp_span_id=%016x parent_span_id=%016x trace_id=%s\n",
+		tcpSpanInfo.Pid, destIP, tcpData.Dport, destHostField, srcIP, tcpData.Sport, srcHostField, tcpData.Family, duration,
 		tcpData.Skaddr, tcpSpanInfo.ParentSpanID, f.traceID)
 
 	// Clean up TCP span entry

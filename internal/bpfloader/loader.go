@@ -12,9 +12,14 @@ import (
 
 // Loader manages the lifecycle of BPF programs and their attachments
 type Loader struct {
-	objs     bpf.SchedTraceObjects
-	execLink link.Link
-	exitLink link.Link
+	objs               bpf.SchedTraceObjects
+	execLink           link.Link
+	exitLink           link.Link
+	tcpCloseLink       link.Link
+	tcpV4ConnectEntry  link.Link
+	tcpV4ConnectExit   link.Link
+	tcpV6ConnectEntry  link.Link
+	tcpV6ConnectExit   link.Link
 }
 
 // New creates a new Loader and loads the BPF objects into the kernel
@@ -46,6 +51,53 @@ func (l *Loader) Attach() error {
 		return fmt.Errorf("attaching exit tracepoint: %w", err)
 	}
 
+	// Attach kprobes for TCP connect tracking
+	l.tcpV4ConnectEntry, err = link.Kprobe("tcp_v4_connect", l.objs.TcpV4ConnectEntry, nil)
+	if err != nil {
+		l.exitLink.Close()
+		l.execLink.Close()
+		return fmt.Errorf("attaching tcp_v4_connect kprobe: %w", err)
+	}
+
+	l.tcpV4ConnectExit, err = link.Kretprobe("tcp_v4_connect", l.objs.TcpV4ConnectExit, nil)
+	if err != nil {
+		l.tcpV4ConnectEntry.Close()
+		l.exitLink.Close()
+		l.execLink.Close()
+		return fmt.Errorf("attaching tcp_v4_connect kretprobe: %w", err)
+	}
+
+	l.tcpV6ConnectEntry, err = link.Kprobe("tcp_v6_connect", l.objs.TcpV6ConnectEntry, nil)
+	if err != nil {
+		l.tcpV4ConnectExit.Close()
+		l.tcpV4ConnectEntry.Close()
+		l.exitLink.Close()
+		l.execLink.Close()
+		return fmt.Errorf("attaching tcp_v6_connect kprobe: %w", err)
+	}
+
+	l.tcpV6ConnectExit, err = link.Kretprobe("tcp_v6_connect", l.objs.TcpV6ConnectExit, nil)
+	if err != nil {
+		l.tcpV6ConnectEntry.Close()
+		l.tcpV4ConnectExit.Close()
+		l.tcpV4ConnectEntry.Close()
+		l.exitLink.Close()
+		l.execLink.Close()
+		return fmt.Errorf("attaching tcp_v6_connect kretprobe: %w", err)
+	}
+
+	// Attach inet_sock_set_state tracepoint for TCP close tracking
+	l.tcpCloseLink, err = link.Tracepoint("sock", "inet_sock_set_state", l.objs.HandleInetSockSetState, nil)
+	if err != nil {
+		l.tcpV6ConnectExit.Close()
+		l.tcpV6ConnectEntry.Close()
+		l.tcpV4ConnectExit.Close()
+		l.tcpV4ConnectEntry.Close()
+		l.exitLink.Close()
+		l.execLink.Close()
+		return fmt.Errorf("attaching TCP close tracepoint: %w", err)
+	}
+
 	return nil
 }
 
@@ -71,6 +123,36 @@ func (l *Loader) TrackPID(pid int) error {
 // Close releases all BPF resources including links and loaded objects
 func (l *Loader) Close() error {
 	var errs []error
+
+	if l.tcpCloseLink != nil {
+		if err := l.tcpCloseLink.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing TCP close link: %w", err))
+		}
+	}
+
+	if l.tcpV6ConnectExit != nil {
+		if err := l.tcpV6ConnectExit.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing TCP v6 connect exit link: %w", err))
+		}
+	}
+
+	if l.tcpV6ConnectEntry != nil {
+		if err := l.tcpV6ConnectEntry.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing TCP v6 connect entry link: %w", err))
+		}
+	}
+
+	if l.tcpV4ConnectExit != nil {
+		if err := l.tcpV4ConnectExit.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing TCP v4 connect exit link: %w", err))
+		}
+	}
+
+	if l.tcpV4ConnectEntry != nil {
+		if err := l.tcpV4ConnectEntry.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing TCP v4 connect entry link: %w", err))
+		}
+	}
 
 	if l.exitLink != nil {
 		if err := l.exitLink.Close(); err != nil {

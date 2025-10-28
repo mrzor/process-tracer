@@ -1,0 +1,57 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Compiled Go binaries
+sched_trace
+/cmd/*/cmd
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Go workspace file
+go.work
+
+# Dependency directories
+vendor/
+
+# eBPF compiled objects
+*.o
+
+# eBPF generated Go files (from bpf2go)
+*_bpfeb.go
+*_bpfel.go
+*_bpfeb.o
+*_bpfel.o
+
+# Generated vmlinux.h (kernel headers)
+vmlinux.h
+
+# IDE and editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS specific files
+Thumbs.db
+.DS_Store
+
+# Debugging and profiling
+*.prof
+*.pprof
+__debug_bin*
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+

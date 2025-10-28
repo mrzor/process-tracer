@@ -1,0 +1,18 @@
+[tools]
+go = "1.25"
+
+[tasks.go-generate]
+description = "Generate BPF Go bindings using bpf2go"
+dir = "golang"
+run = "go generate ./internal/bpf"
+
+[tasks.go-build]
+description = "Build Go sched_trace binary"
+dir = "golang"
+run = "go build -o sched_trace ./cmd/sched_trace"
+depends = ["go-generate"]
+
+[tasks.go-clean]
+description = "Clean generated Go files and binary"
+dir = "golang"
+run = "rm -f sched_trace internal/bpf/schedtrace_*.go internal/bpf/schedtrace_*.o"

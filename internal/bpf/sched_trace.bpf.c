@@ -51,6 +51,7 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     e->pid = pid;
     e->uid = (u32)uid_gid;
     e->ppid = ppid;
+    e->timestamp = bpf_ktime_get_ns();
 
     bpf_get_current_comm(&e->comm, sizeof(e->comm));
     e->exit_code = 0;
@@ -90,6 +91,7 @@ int handle_exit(struct trace_event_raw_sched_process_template *ctx)
     e->type = EVENT_EXIT;
     e->pid = pid;
     e->uid = (u32)uid_gid;
+    e->timestamp = bpf_ktime_get_ns();
 
     ppid = BPF_CORE_READ(task, real_parent, tgid);
     e->ppid = ppid;

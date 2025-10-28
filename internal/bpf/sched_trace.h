@@ -13,6 +13,7 @@ struct event {
     __u32 ppid;
     __u32 uid;
     __u32 exit_code;
+    __u64 timestamp;
     __u8 type;
     char comm[TASK_COMM_LEN];
 };

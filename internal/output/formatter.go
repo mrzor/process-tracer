@@ -13,11 +13,16 @@ type EventHandler interface {
 }
 
 // ConsoleFormatter formats events for console output
-type ConsoleFormatter struct{}
+type ConsoleFormatter struct {
+	// Map to track PID to start timestamp for duration calculation
+	startTimes map[uint32]uint64
+}
 
 // NewConsoleFormatter creates a new ConsoleFormatter
 func NewConsoleFormatter() *ConsoleFormatter {
-	return &ConsoleFormatter{}
+	return &ConsoleFormatter{
+		startTimes: make(map[uint32]uint64),
+	}
 }
 
 // HandleEvent formats and prints an event to stdout
@@ -27,11 +32,22 @@ func (f *ConsoleFormatter) HandleEvent(event *bpf.Event) error {
 
 	switch event.Type {
 	case bpf.EVENT_EXEC:
-		fmt.Printf("EXEC: pid=%d ppid=%d uid=%d comm=%s\n",
-			event.Pid, event.Ppid, event.Uid, comm)
+		// Store the start timestamp for this PID
+		f.startTimes[event.Pid] = event.Timestamp
 	case bpf.EVENT_EXIT:
-		fmt.Printf("EXIT: pid=%d ppid=%d uid=%d exit_code=%d comm=%s\n",
-			event.Pid, event.Ppid, event.Uid, event.ExitCode, comm)
+		// Calculate duration if we have a start time
+		startTime, ok := f.startTimes[event.Pid]
+		if ok {
+			duration := event.Timestamp - startTime
+			fmt.Printf("pid=%d ppid=%d uid=%d comm=%s duration=%dns\n",
+				event.Pid, event.Ppid, event.Uid, comm, duration)
+			// Clean up the map entry
+			delete(f.startTimes, event.Pid)
+		} else {
+			// No start time found (shouldn't happen in normal operation)
+			fmt.Printf("pid=%d ppid=%d uid=%d comm=%s duration=unknown\n",
+				event.Pid, event.Ppid, event.Uid, comm)
+		}
 	default:
 		return fmt.Errorf("unknown event type: %d", event.Type)
 	}

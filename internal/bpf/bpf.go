@@ -11,12 +11,13 @@ const (
 
 // Event matches the C struct from sched_trace.h
 type Event struct {
-	Pid      uint32
-	Ppid     uint32
-	Uid      uint32
-	ExitCode uint32
-	Type     uint8
-	Comm     [16]byte
+	Pid       uint32
+	Ppid      uint32
+	Uid       uint32
+	ExitCode  uint32
+	Timestamp uint64
+	Type      uint8
+	Comm      [16]byte
 }
 
 // Exported wrapper types

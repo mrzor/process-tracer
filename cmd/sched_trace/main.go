@@ -15,6 +15,7 @@ import (
 	"sched_trace/internal/bpfloader"
 	"sched_trace/internal/config"
 	"sched_trace/internal/eventstream"
+	"sched_trace/internal/otel"
 	"sched_trace/internal/output"
 	"sched_trace/internal/pseudo_reverse_dns"
 )
@@ -48,6 +49,30 @@ func run() error {
 		return err
 	}
 
+	// Parse OTEL configuration from environment
+	otelCfg, err := config.ParseOTELConfig()
+	if err != nil {
+		return fmt.Errorf("failed to parse OTEL config: %w", err)
+	}
+
+	// Initialize OTEL provider and establish connection
+	// This MUST succeed before we proceed - abort on failure
+	// Sends a test span with the trace ID to verify end-to-end connectivity
+	tp, err := otel.InitProvider(otelCfg, cfg.TraceID)
+	if err != nil {
+		return fmt.Errorf("ABORT: failed to initialize OTEL provider: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otel.ShutdownProvider(tp, shutdownCtx); err != nil {
+			log.Printf("Error shutting down OTEL provider: %v", err)
+		}
+	}()
+
+	// Create tracer
+	tracer := tp.Tracer("sched_trace")
+
 	// Load BPF program
 	loader, err := bpfloader.New()
 	if err != nil {
@@ -72,8 +97,11 @@ func run() error {
 	resolver.AddStaticSource(&pseudo_reverse_dns.EnvironSource{})
 	resolver.AddStaticSource(&pseudo_reverse_dns.CmdlineSource{})
 
-	// Create event stream with console formatter
-	formatter := output.NewConsoleFormatter(cfg.TraceID, resolver)
+	// Create event stream with OTEL formatter
+	formatter, err := output.NewOTELFormatter(tracer, cfg.TraceID, resolver)
+	if err != nil {
+		return fmt.Errorf("failed to create OTEL formatter: %w", err)
+	}
 	stream := eventstream.New(rd, formatter)
 
 	// Create context for event stream
@@ -151,4 +179,3 @@ func run() error {
 
 	return nil
 }
-

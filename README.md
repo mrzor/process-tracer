@@ -53,11 +53,26 @@ sudo ./sched_trace --trace-id 0123456789abcdef0123456789abcdef -- python script.
 
 ## Features
 
+### Span Tracking and Timestamps
+
+Both process spans and TCP connection spans include:
+- **ISO8601 timestamps**: `start_time` and `end_time` in RFC3339Nano format with nanosecond precision
+- **Duration**: Elapsed time in nanoseconds (calculated from CLOCK_MONOTONIC for accuracy)
+- **OpenTelemetry span IDs**: For distributed tracing correlation
+- **Parent span relationships**: Hierarchical span tracking
+
+**Example output:**
+```
+type=process pid=12345 ... start_time=2025-10-28T22:15:30.123456789Z end_time=2025-10-28T22:15:31.234567890Z duration=1111111101ns ...
+type=tcp pid=12345 ... start_time=2025-10-28T22:15:30.500000000Z end_time=2025-10-28T22:15:30.750000000Z duration=250000000ns ...
+```
+
 ### TCP Connection Tracking
 
 Tracks TCP connect/close events with OpenTelemetry span IDs, showing:
 - Source/destination IPs and ports
-- Connection duration
+- ISO8601 start/end timestamps
+- Connection duration (nanoseconds)
 - Parent span relationships
 
 ### Pseudo Reverse DNS

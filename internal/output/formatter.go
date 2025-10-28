@@ -1,12 +1,16 @@
 package output
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"sched_trace/internal/bpf"
 	"sched_trace/internal/pseudo_reverse_dns"
@@ -38,16 +42,55 @@ type ConsoleFormatter struct {
 	tcpSpans map[uint64]*TCPSpanInfo // keyed by socket address
 	traceID  string                  // 32 hex chars
 	resolver *pseudo_reverse_dns.Resolver
+	bootTime time.Time // System boot time for converting monotonic timestamps to wall-clock
 }
 
 // NewConsoleFormatter creates a new ConsoleFormatter
 func NewConsoleFormatter(traceID string, resolver *pseudo_reverse_dns.Resolver) *ConsoleFormatter {
+	bootTime, err := getSystemBootTime()
+	if err != nil {
+		// Fallback: estimate boot time from current time - uptime
+		// This is less accurate but allows the tracer to continue
+		bootTime = time.Now().Add(-time.Hour) // Conservative fallback
+	}
+
 	return &ConsoleFormatter{
 		spans:    make(map[uint32]*SpanInfo),
 		tcpSpans: make(map[uint64]*TCPSpanInfo),
 		traceID:  traceID,
 		resolver: resolver,
+		bootTime: bootTime,
 	}
+}
+
+// getSystemBootTime reads the system boot time from /proc/stat
+func getSystemBootTime() (time.Time, error) {
+	file, err := os.Open("/proc/stat")
+	if err != nil {
+		return time.Time{}, fmt.Errorf("failed to open /proc/stat: %w", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "btime ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				bootTimeSec, err := strconv.ParseInt(fields[1], 10, 64)
+				if err != nil {
+					return time.Time{}, fmt.Errorf("failed to parse btime: %w", err)
+				}
+				return time.Unix(bootTimeSec, 0), nil
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return time.Time{}, fmt.Errorf("error reading /proc/stat: %w", err)
+	}
+
+	return time.Time{}, fmt.Errorf("btime not found in /proc/stat")
 }
 
 // generateSpanID generates a random 64-bit span ID
@@ -58,6 +101,11 @@ func generateSpanID() (uint64, error) {
 		return 0, err
 	}
 	return binary.LittleEndian.Uint64(b), nil
+}
+
+// monotonicToWallClock converts a monotonic timestamp (nanoseconds since boot) to wall-clock time
+func (f *ConsoleFormatter) monotonicToWallClock(monotonicNanos uint64) time.Time {
+	return f.bootTime.Add(time.Duration(monotonicNanos))
 }
 
 // HandleEvent formats and prints an event to stdout
@@ -114,16 +162,19 @@ func (f *ConsoleFormatter) handleProcessExit(event *bpf.Event) error {
 	spanInfo, ok := f.spans[event.Pid]
 	if ok {
 		duration := event.Timestamp - spanInfo.StartTime
+		startTime := f.monotonicToWallClock(spanInfo.StartTime)
+		endTime := f.monotonicToWallClock(event.Timestamp)
 
-		fmt.Printf("type=process pid=%d ppid=%d uid=%d comm=%s duration=%dns span_id=%016x parent_span_id=%016x trace_id=%s\n",
-			event.Pid, event.Ppid, event.Uid, comm, duration,
+		fmt.Printf("type=process pid=%d ppid=%d uid=%d comm=%s start_time=%s end_time=%s duration=%dns span_id=%016x parent_span_id=%016x trace_id=%s\n",
+			event.Pid, event.Ppid, event.Uid, comm,
+			startTime.Format(time.RFC3339Nano), endTime.Format(time.RFC3339Nano), duration,
 			spanInfo.SpanID, spanInfo.ParentSpanID, f.traceID)
 
 		// Don't delete the span immediately - TCP CLOSE events may arrive after process exit
 		// We'll let them accumulate (in a real system, we'd need periodic cleanup)
 	} else {
 		// No span info found (shouldn't happen in normal operation)
-		fmt.Printf("type=process pid=%d ppid=%d uid=%d comm=%s duration=unknown span_id=unknown parent_span_id=unknown trace_id=%s\n",
+		fmt.Printf("type=process pid=%d ppid=%d uid=%d comm=%s start_time=unknown end_time=unknown duration=unknown span_id=unknown parent_span_id=unknown trace_id=%s\n",
 			event.Pid, event.Ppid, event.Uid, comm, f.traceID)
 	}
 
@@ -166,6 +217,8 @@ func (f *ConsoleFormatter) handleTCPClose(event *bpf.Event) error {
 	}
 
 	duration := event.Timestamp - tcpSpanInfo.StartTime
+	startTime := f.monotonicToWallClock(tcpSpanInfo.StartTime)
+	endTime := f.monotonicToWallClock(event.Timestamp)
 
 	// Format IP address based on family
 	var destIP, srcIP string
@@ -189,8 +242,9 @@ func (f *ConsoleFormatter) handleTCPClose(event *bpf.Event) error {
 		srcHostField = fmt.Sprintf(" src_host=%s", strings.Join(srcHosts, ","))
 	}
 
-	fmt.Printf("type=tcp pid=%d dest_ip=%s dest_port=%d%s src_ip=%s src_port=%d%s family=%d duration=%dns tcp_span_id=%016x parent_span_id=%016x trace_id=%s\n",
-		tcpSpanInfo.Pid, destIP, tcpData.Dport, destHostField, srcIP, tcpData.Sport, srcHostField, tcpData.Family, duration,
+	fmt.Printf("type=tcp pid=%d dest_ip=%s dest_port=%d%s src_ip=%s src_port=%d%s family=%d start_time=%s end_time=%s duration=%dns tcp_span_id=%016x parent_span_id=%016x trace_id=%s\n",
+		tcpSpanInfo.Pid, destIP, tcpData.Dport, destHostField, srcIP, tcpData.Sport, srcHostField, tcpData.Family,
+		startTime.Format(time.RFC3339Nano), endTime.Format(time.RFC3339Nano), duration,
 		tcpData.Skaddr, tcpSpanInfo.ParentSpanID, f.traceID)
 
 	// Clean up TCP span entry

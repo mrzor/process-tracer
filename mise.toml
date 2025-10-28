@@ -13,3 +13,8 @@ depends = ["go-generate"]
 [tasks.go-clean]
 description = "Clean generated Go files and binary"
 run = "rm -f sched_trace internal/bpf/schedtrace_*.go internal/bpf/schedtrace_*.o"
+
+[tasks.setcap]
+description = "Set capabilities on sched_trace binary to run without sudo"
+run = "sudo setcap cap_bpf,cap_perfmon,cap_net_admin,cap_sys_resource,cap_dac_override+ep ./sched_trace"
+depends = ["go-build"]

@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(go build:*)",
-      "Bash(mise run go-build:*)"
+      "Bash(mise run go-build:*)",
+      "Bash(mise run:*)",
+      "Bash(./sched_trace:*)"
     ],
     "deny": [],
     "ask": []

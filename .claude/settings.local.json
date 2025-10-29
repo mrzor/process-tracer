@@ -4,7 +4,16 @@
       "Bash(go build:*)",
       "Bash(mise run go-build:*)",
       "Bash(mise run:*)",
-      "Bash(./sched_trace:*)"
+      "Bash(./sched_trace:*)",
+      "Bash(git add:*)",
+      "Bash(bpftool btf dump:*)",
+      "Bash(perf list:*)",
+      "Read(//proc/**)",
+      "Bash(cat:*)",
+      "Bash(timeout 5 ./sched_trace:*)",
+      "Bash(sysctl:*)",
+      "Read(//usr/include/linux/**)",
+      "Read(//usr/include/netinet/**)"
     ],
     "deny": [],
     "ask": []

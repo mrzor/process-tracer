@@ -15,7 +15,16 @@
       "Read(//usr/include/linux/**)",
       "Read(//usr/include/netinet/**)",
       "Bash(go get:*)",
-      "Bash(go test:*)"
+      "Bash(go test:*)",
+      "Bash(git config:*)",
+      "Read(//home/zor/.gnupg/**)",
+      "Bash(gpg2 --list-keys:*)",
+      "Bash(gpg2:*)",
+      "Read(//home/zor/**)",
+      "Bash(git commit:*)",
+      "Read(//tmp/**)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)"
     ],
     "deny": [],
     "ask": []

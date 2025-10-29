@@ -33,6 +33,33 @@ func New() (*Loader, error) {
 	return l, nil
 }
 
+// closeErrorf closes all attached links and returns a formatted error
+func (l *Loader) closeErrorf(errstr string, e error) error {
+	// Close all links that may have been attached (nil-safe)
+	if l.tcpCloseLink != nil {
+		l.tcpCloseLink.Close()
+	}
+	if l.tcpV6ConnectExit != nil {
+		l.tcpV6ConnectExit.Close()
+	}
+	if l.tcpV6ConnectEntry != nil {
+		l.tcpV6ConnectEntry.Close()
+	}
+	if l.tcpV4ConnectExit != nil {
+		l.tcpV4ConnectExit.Close()
+	}
+	if l.tcpV4ConnectEntry != nil {
+		l.tcpV4ConnectEntry.Close()
+	}
+	if l.exitLink != nil {
+		l.exitLink.Close()
+	}
+	if l.execLink != nil {
+		l.execLink.Close()
+	}
+	return fmt.Errorf("%s: %w", errstr, e)
+}
+
 // Attach attaches the BPF programs to their tracepoints
 func (l *Loader) Attach() error {
 	var err error
@@ -40,62 +67,40 @@ func (l *Loader) Attach() error {
 	// Attach to sched_process_exec tracepoint
 	l.execLink, err = link.Tracepoint("sched", "sched_process_exec", l.objs.HandleExec, nil)
 	if err != nil {
-		return fmt.Errorf("attaching exec tracepoint: %w", err)
+		return l.closeErrorf("attaching exec tracepoint", err)
 	}
 
 	// Attach to sched_process_exit tracepoint
 	l.exitLink, err = link.Tracepoint("sched", "sched_process_exit", l.objs.HandleExit, nil)
 	if err != nil {
-		// Clean up exec link if exit attachment fails
-		l.execLink.Close()
-		return fmt.Errorf("attaching exit tracepoint: %w", err)
+		return l.closeErrorf("attaching exit tracepoint", err)
 	}
 
 	// Attach kprobes for TCP connect tracking
 	l.tcpV4ConnectEntry, err = link.Kprobe("tcp_v4_connect", l.objs.TcpV4ConnectEntry, nil)
 	if err != nil {
-		l.exitLink.Close()
-		l.execLink.Close()
-		return fmt.Errorf("attaching tcp_v4_connect kprobe: %w", err)
+		return l.closeErrorf("attaching tcp_v4_connect kprobe", err)
 	}
 
 	l.tcpV4ConnectExit, err = link.Kretprobe("tcp_v4_connect", l.objs.TcpV4ConnectExit, nil)
 	if err != nil {
-		l.tcpV4ConnectEntry.Close()
-		l.exitLink.Close()
-		l.execLink.Close()
-		return fmt.Errorf("attaching tcp_v4_connect kretprobe: %w", err)
+		return l.closeErrorf("attaching tcp_v4_connect kretprobe", err)
 	}
 
 	l.tcpV6ConnectEntry, err = link.Kprobe("tcp_v6_connect", l.objs.TcpV6ConnectEntry, nil)
 	if err != nil {
-		l.tcpV4ConnectExit.Close()
-		l.tcpV4ConnectEntry.Close()
-		l.exitLink.Close()
-		l.execLink.Close()
-		return fmt.Errorf("attaching tcp_v6_connect kprobe: %w", err)
+		return l.closeErrorf("attaching tcp_v6_connect kprobe", err)
 	}
 
 	l.tcpV6ConnectExit, err = link.Kretprobe("tcp_v6_connect", l.objs.TcpV6ConnectExit, nil)
 	if err != nil {
-		l.tcpV6ConnectEntry.Close()
-		l.tcpV4ConnectExit.Close()
-		l.tcpV4ConnectEntry.Close()
-		l.exitLink.Close()
-		l.execLink.Close()
-		return fmt.Errorf("attaching tcp_v6_connect kretprobe: %w", err)
+		return l.closeErrorf("attaching tcp_v6_connect kretprobe", err)
 	}
 
 	// Attach inet_sock_set_state tracepoint for TCP close tracking
 	l.tcpCloseLink, err = link.Tracepoint("sock", "inet_sock_set_state", l.objs.HandleInetSockSetState, nil)
 	if err != nil {
-		l.tcpV6ConnectExit.Close()
-		l.tcpV6ConnectEntry.Close()
-		l.tcpV4ConnectExit.Close()
-		l.tcpV4ConnectEntry.Close()
-		l.exitLink.Close()
-		l.execLink.Close()
-		return fmt.Errorf("attaching TCP close tracepoint: %w", err)
+		return l.closeErrorf("attaching TCP close tracepoint", err)
 	}
 
 	return nil

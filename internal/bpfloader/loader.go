@@ -10,19 +10,19 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
-// Loader manages the lifecycle of BPF programs and their attachments
+// Loader manages the lifecycle of BPF programs and their attachments.
 type Loader struct {
-	objs               bpf.SchedTraceObjects
-	execLink           link.Link
-	exitLink           link.Link
-	tcpCloseLink       link.Link
-	tcpV4ConnectEntry  link.Link
-	tcpV4ConnectExit   link.Link
-	tcpV6ConnectEntry  link.Link
-	tcpV6ConnectExit   link.Link
+	objs              bpf.SchedTraceObjects
+	execLink          link.Link
+	exitLink          link.Link
+	tcpCloseLink      link.Link
+	tcpV4ConnectEntry link.Link
+	tcpV4ConnectExit  link.Link
+	tcpV6ConnectEntry link.Link
+	tcpV6ConnectExit  link.Link
 }
 
-// New creates a new Loader and loads the BPF objects into the kernel
+// New creates a new Loader and loads the BPF objects into the kernel.
 func New() (*Loader, error) {
 	l := &Loader{}
 
@@ -33,7 +33,7 @@ func New() (*Loader, error) {
 	return l, nil
 }
 
-// closeErrorf closes all attached links and returns a formatted error
+// closeErrorf closes all attached links and returns a formatted error.
 func (l *Loader) closeErrorf(errstr string, e error) error {
 	// Close all links that may have been attached (nil-safe)
 	if l.tcpCloseLink != nil {
@@ -60,7 +60,7 @@ func (l *Loader) closeErrorf(errstr string, e error) error {
 	return fmt.Errorf("%s: %w", errstr, e)
 }
 
-// Attach attaches the BPF programs to their tracepoints
+// Attach attaches the BPF programs to their tracepoints.
 func (l *Loader) Attach() error {
 	var err error
 
@@ -106,7 +106,7 @@ func (l *Loader) Attach() error {
 	return nil
 }
 
-// OpenRingBuffer opens and returns a ring buffer reader for receiving events
+// OpenRingBuffer opens and returns a ring buffer reader for receiving events.
 func (l *Loader) OpenRingBuffer() (*ringbuf.Reader, error) {
 	rd, err := ringbuf.NewReader(l.objs.Rb)
 	if err != nil {
@@ -115,7 +115,7 @@ func (l *Loader) OpenRingBuffer() (*ringbuf.Reader, error) {
 	return rd, nil
 }
 
-// TrackPID adds a PID to the tracked_pids map in the BPF program
+// TrackPID adds a PID to the tracked_pids map in the BPF program.
 func (l *Loader) TrackPID(pid int) error {
 	pidKey := uint32(pid)
 	val := uint8(1)
@@ -125,7 +125,7 @@ func (l *Loader) TrackPID(pid int) error {
 	return nil
 }
 
-// Close releases all BPF resources including links and loaded objects
+// Close releases all BPF resources including links and loaded objects.
 func (l *Loader) Close() error {
 	var errs []error
 
@@ -176,7 +176,7 @@ func (l *Loader) Close() error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("errors during cleanup: %v", errors.Join(errs...))
+		return fmt.Errorf("errors during cleanup: %w", errors.Join(errs...))
 	}
 
 	return nil

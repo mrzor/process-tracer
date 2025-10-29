@@ -34,7 +34,7 @@ func TestParseEnviron_EmptyValue(t *testing.T) {
 	result := parseEnviron(raw)
 
 	assert.Len(t, result, 2)
-	assert.Equal(t, "", result["EMPTY_VAR"])
+	assert.Empty(t, result["EMPTY_VAR"])
 	assert.Equal(t, "value", result["NORMAL_VAR"])
 }
 
@@ -98,7 +98,7 @@ func TestParseEnviron_SpecialCharacters(t *testing.T) {
 	result := parseEnviron(raw)
 
 	assert.Len(t, result, 4)
-	assert.Equal(t, "{\"key\": \"value\"}", result["JSON"])
+	assert.JSONEq(t, "{\"key\": \"value\"}", result["JSON"])
 	assert.Equal(t, "  spaces  ", result["WHITESPACE"])
 	assert.Equal(t, "line1\nline2", result["NEWLINE"])
 	assert.Equal(t, "col1\tcol2", result["TAB"])
@@ -146,6 +146,6 @@ func TestParseCmdline_EmptyArgs(t *testing.T) {
 	args, fullCmd := parseCmdline(raw)
 
 	require.Len(t, args, 3)
-	assert.Equal(t, "", args[1])
+	assert.Empty(t, args[1])
 	assert.Equal(t, "cmd  arg", fullCmd)
 }

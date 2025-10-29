@@ -16,26 +16,26 @@ const (
 )
 
 // Event matches the C struct from sched_trace.h
-// Using explicit struct layout to match C union
+// Using explicit struct layout to match C union.
 type Event struct {
 	Pid       uint32
 	Ppid      uint32
 	Uid       uint32
-	Pad1      uint32  // Padding before timestamp to maintain 8-byte alignment
+	Pad1      uint32 // Padding before timestamp to maintain 8-byte alignment
 	Timestamp uint64
 	Type      uint8
 	Pad2      [7]byte // Padding to align Data field
 	Data      EventData
 }
 
-// EventData is a union type matching the C union
+// EventData is a union type matching the C union.
 type EventData struct {
 	// This will overlay both process and TCP data
 	// The actual interpretation depends on Event.Type
 	Raw [48]byte // Sized to fit the largest union member
 }
 
-// ProcessData extracts process event fields
+// ProcessData extracts process event fields.
 func (e *Event) ProcessData() *ProcessEventData {
 	if e.Type != EVENT_EXEC && e.Type != EVENT_EXIT {
 		return nil
@@ -43,7 +43,7 @@ func (e *Event) ProcessData() *ProcessEventData {
 	return (*ProcessEventData)(unsafe.Pointer(&e.Data))
 }
 
-// TCPData extracts TCP event fields
+// TCPData extracts TCP event fields.
 func (e *Event) TCPData() *TCPEventData {
 	if e.Type != EVENT_TCP_CONNECT && e.Type != EVENT_TCP_CLOSE {
 		return nil
@@ -51,13 +51,13 @@ func (e *Event) TCPData() *TCPEventData {
 	return (*TCPEventData)(unsafe.Pointer(&e.Data))
 }
 
-// ProcessEventData matches the proc struct in the C union
+// ProcessEventData matches the proc struct in the C union.
 type ProcessEventData struct {
 	ExitCode uint32
 	Comm     [16]byte
 }
 
-// TCPEventData matches the tcp struct in the C union
+// TCPEventData matches the tcp struct in the C union.
 type TCPEventData struct {
 	Skaddr uint64
 	Saddr  [16]byte
@@ -68,15 +68,14 @@ type TCPEventData struct {
 	_      uint16 // Padding
 }
 
-// Exported wrapper types
+// Exported wrapper types.
 type (
 	SchedTraceObjects  = schedTraceObjects
 	SchedTracePrograms = schedTracePrograms
 	SchedTraceMaps     = schedTraceMaps
 )
 
-// LoadSchedTraceObjects loads the BPF programs and maps
+// LoadSchedTraceObjects loads the BPF programs and maps.
 func LoadSchedTraceObjects(obj *schedTraceObjects, opts *ebpf.CollectionOptions) error {
 	return loadSchedTraceObjects(obj, opts)
 }
-

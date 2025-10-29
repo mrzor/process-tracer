@@ -13,14 +13,14 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
-// Stream reads events from a ringbuffer and dispatches them to a handler
+// Stream reads events from a ringbuffer and dispatches them to a handler.
 type Stream struct {
 	reader  *ringbuf.Reader
 	handler output.EventHandler
 	stopCh  chan struct{}
 }
 
-// New creates a new Stream with the given ringbuffer reader and event handler
+// New creates a new Stream with the given ringbuffer reader and event handler.
 func New(reader *ringbuf.Reader, handler output.EventHandler) *Stream {
 	return &Stream{
 		reader:  reader,
@@ -31,19 +31,19 @@ func New(reader *ringbuf.Reader, handler output.EventHandler) *Stream {
 
 // Start begins reading events from the ringbuffer in a goroutine
 // It returns immediately and processes events in the background until
-// the context is cancelled or Stop is called
+// the context is cancelled or Stop is called.
 func (s *Stream) Start(ctx context.Context) error {
 	go s.processEvents(ctx)
 	return nil
 }
 
-// Stop signals the event processing goroutine to stop
+// Stop signals the event processing goroutine to stop.
 func (s *Stream) Stop() error {
 	close(s.stopCh)
 	return nil
 }
 
-// processEvents is the main event loop that reads and processes events
+// processEvents is the main event loop that reads and processes events.
 func (s *Stream) processEvents(ctx context.Context) {
 	for {
 		select {

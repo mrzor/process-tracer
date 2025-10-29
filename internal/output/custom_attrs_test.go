@@ -149,7 +149,7 @@ func TestEvaluateCustomAttributes_MissingEnvVar(t *testing.T) {
 
 	assert.Equal(t, "/usr/bin/nano", attrMap["existing"])
 	// Missing env var results in empty string (Go map zero value)
-	assert.Equal(t, "", attrMap["missing"])
+	assert.Empty(t, attrMap["missing"])
 }
 
 func TestEvaluateCustomAttributes_BasicMapExpansion(t *testing.T) {

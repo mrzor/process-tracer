@@ -27,7 +27,7 @@ func main() {
 }
 
 // getTCPFinTimeout reads net.ipv4.tcp_fin_timeout from sysctl
-// Returns timeout in seconds, defaults to 60 if unable to read
+// Returns timeout in seconds, defaults to 60 if unable to read.
 func getTCPFinTimeout() int {
 	data, err := os.ReadFile("/proc/sys/net/ipv4/tcp_fin_timeout")
 	if err != nil {

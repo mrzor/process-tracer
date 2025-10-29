@@ -52,12 +52,13 @@ type HostMapping struct {
 // Data ingestion happens via Handle* methods; resolution via Lookup().
 //
 // Usage:
-//   r := New()
-//   r.AddStaticSource(&EnvironSource{})
-//   r.AddStaticSource(&CmdlineSource{})
-//   r.HandleStaticSources(pid)  // Ingests data from static sources
-//   r.HandleDynamicSource(pid, "file_read", data)  // Ingests runtime events
-//   hostnames := r.Lookup(ip)  // Resolves IP to hostnames (call as late as possible)
+//
+//	r := New()
+//	r.AddStaticSource(&EnvironSource{})
+//	r.AddStaticSource(&CmdlineSource{})
+//	r.HandleStaticSources(pid)  // Ingests data from static sources
+//	r.HandleDynamicSource(pid, "file_read", data)  // Ingests runtime events
+//	hostnames := r.Lookup(ip)  // Resolves IP to hostnames (call as late as possible)
 type Resolver struct {
 	IPToHosts map[string]*HostMapping
 	HostToIPs map[string][]string

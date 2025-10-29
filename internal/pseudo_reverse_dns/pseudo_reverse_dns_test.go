@@ -168,7 +168,7 @@ func TestHandleDynamicSource(t *testing.T) {
 	assert.True(t, hasData, "Expected dynamic source to populate resolver")
 }
 
-// mockDynamicSource is a test implementation of DynamicSource
+// mockDynamicSource is a test implementation of DynamicSource.
 type mockDynamicSource struct {
 	responses map[string][]string
 }

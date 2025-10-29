@@ -11,12 +11,12 @@ import (
 	"sched_trace/internal/bpf"
 )
 
-// EventHandler is the interface for handling BPF events
+// EventHandler is the interface for handling BPF events.
 type EventHandler interface {
 	HandleEvent(event *bpf.Event) error
 }
 
-// getSystemBootTime reads the system boot time from /proc/stat
+// getSystemBootTime reads the system boot time from /proc/stat.
 func getSystemBootTime() (time.Time, error) {
 	file, err := os.Open("/proc/stat")
 	if err != nil {

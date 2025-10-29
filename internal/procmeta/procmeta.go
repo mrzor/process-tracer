@@ -8,28 +8,28 @@ import (
 	"sched_trace/internal/pseudo_reverse_dns"
 )
 
-// ProcessMetadata holds structured process information for expression evaluation
+// ProcessMetadata holds structured process information for expression evaluation.
 type ProcessMetadata struct {
 	Environ     map[string]string // Parsed environment variables
 	Args        []string          // Command-line arguments
 	CmdlineFull string            // Full command line as single string
 }
 
-// Collector gathers process metadata from /proc filesystem
+// Collector gathers process metadata from /proc filesystem.
 type Collector struct {
-	environSrc  *pseudo_reverse_dns.EnvironSource
-	cmdlineSrc  *pseudo_reverse_dns.CmdlineSource
+	environSrc *pseudo_reverse_dns.EnvironSource
+	cmdlineSrc *pseudo_reverse_dns.CmdlineSource
 }
 
-// NewCollector creates a new process metadata collector
+// NewCollector creates a new process metadata collector.
 func NewCollector() *Collector {
 	return &Collector{
-		environSrc:  &pseudo_reverse_dns.EnvironSource{},
-		cmdlineSrc:  &pseudo_reverse_dns.CmdlineSource{},
+		environSrc: &pseudo_reverse_dns.EnvironSource{},
+		cmdlineSrc: &pseudo_reverse_dns.CmdlineSource{},
 	}
 }
 
-// Collect gathers all process metadata for a given PID
+// Collect gathers all process metadata for a given PID.
 func (c *Collector) Collect(pid int) (*ProcessMetadata, error) {
 	metadata := &ProcessMetadata{
 		Environ: make(map[string]string),
@@ -61,7 +61,7 @@ func (c *Collector) Collect(pid int) (*ProcessMetadata, error) {
 	return metadata, nil
 }
 
-// parseEnviron converts raw "KEY=VALUE" strings to a map
+// parseEnviron converts raw "KEY=VALUE" strings to a map.
 func parseEnviron(raw []string) map[string]string {
 	result := make(map[string]string, len(raw))
 	for _, entry := range raw {
@@ -74,7 +74,7 @@ func parseEnviron(raw []string) map[string]string {
 	return result
 }
 
-// parseCmdline converts raw command-line arguments to both array and full string
+// parseCmdline converts raw command-line arguments to both array and full string.
 func parseCmdline(raw []string) ([]string, string) {
 	if len(raw) == 0 {
 		return []string{}, ""

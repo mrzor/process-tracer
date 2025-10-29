@@ -7,13 +7,13 @@ import (
 	"strings"
 )
 
-// CustomAttribute represents a custom span attribute with an expression
+// CustomAttribute represents a custom span attribute with an expression.
 type CustomAttribute struct {
 	Name       string
 	Expression string
 }
 
-// Config holds the parsed command-line configuration
+// Config holds the parsed command-line configuration.
 type Config struct {
 	// Command is the executable to run
 	Command string
@@ -26,7 +26,7 @@ type Config struct {
 }
 
 // ParseArgs parses command-line arguments and returns a Config.
-// Expected format: program_name [--trace-id <id>] [-a name expr]... -- <command> [args...]
+// Expected format: program_name [--trace-id <id>] [-a name expr]... -- <command> [args...].
 func ParseArgs(args []string) (*Config, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("no arguments provided")
@@ -82,7 +82,7 @@ func ParseArgs(args []string) (*Config, error) {
 			return nil, fmt.Errorf("trace ID must be 32 hex characters, got %d", len(traceID))
 		}
 		if _, err := hex.DecodeString(traceID); err != nil {
-			return nil, fmt.Errorf("trace ID must be valid hex: %v", err)
+			return nil, fmt.Errorf("trace ID must be valid hex: %w", err)
 		}
 		traceID = strings.ToLower(traceID)
 	} else {
@@ -90,7 +90,7 @@ func ParseArgs(args []string) (*Config, error) {
 		var err error
 		traceID, err = generateTraceID()
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate trace ID: %v", err)
+			return nil, fmt.Errorf("failed to generate trace ID: %w", err)
 		}
 	}
 
@@ -102,7 +102,7 @@ func ParseArgs(args []string) (*Config, error) {
 	}, nil
 }
 
-// generateTraceID generates a random 128-bit trace ID as 32 hex chars
+// generateTraceID generates a random 128-bit trace ID as 32 hex chars.
 func generateTraceID() (string, error) {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
@@ -112,7 +112,7 @@ func generateTraceID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// FullCommand returns the command and all its arguments as a slice
+// FullCommand returns the command and all its arguments as a slice.
 func (c *Config) FullCommand() []string {
 	return append([]string{c.Command}, c.Args...)
 }

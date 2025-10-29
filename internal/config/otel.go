@@ -8,7 +8,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// OTELConfig holds OpenTelemetry configuration from environment variables
+// OTELConfig holds OpenTelemetry configuration from environment variables.
 type OTELConfig struct {
 	ServiceName        string `env:"OTEL_SERVICE_NAME" envDefault:"sched_trace"`
 	ResourceAttributes string `env:"OTEL_RESOURCE_ATTRIBUTES" envDefault:""`
@@ -16,7 +16,7 @@ type OTELConfig struct {
 	TracesEndpoint     string `env:"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" envDefault:""`
 }
 
-// ParseOTELConfig parses OTEL configuration from environment variables
+// ParseOTELConfig parses OTEL configuration from environment variables.
 func ParseOTELConfig() (*OTELConfig, error) {
 	var cfg OTELConfig
 	if err := env.Parse(&cfg); err != nil {
@@ -26,7 +26,7 @@ func ParseOTELConfig() (*OTELConfig, error) {
 }
 
 // GetEndpoint returns the appropriate endpoint for traces
-// Priority: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT > OTEL_EXPORTER_OTLP_ENDPOINT > default
+// Priority: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT > OTEL_EXPORTER_OTLP_ENDPOINT > default.
 func (c *OTELConfig) GetEndpoint() string {
 	if c.TracesEndpoint != "" {
 		return c.TracesEndpoint
@@ -38,7 +38,7 @@ func (c *OTELConfig) GetEndpoint() string {
 }
 
 // ParseResourceAttributes parses the OTEL_RESOURCE_ATTRIBUTES string
-// Format: key1=value1,key2=value2
+// Format: key1=value1,key2=value2.
 func (c *OTELConfig) ParseResourceAttributes() []attribute.KeyValue {
 	if c.ResourceAttributes == "" {
 		return nil

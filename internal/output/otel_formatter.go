@@ -22,19 +22,19 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// OTELSpanInfo holds span and timing information
+// OTELSpanInfo holds span and timing information.
 type OTELSpanInfo struct {
 	Span      trace.Span
 	SpanCtx   trace.SpanContext
 	StartTime uint64 // monotonic timestamp in nanoseconds
 }
 
-// OTELFormatter formats events as OpenTelemetry spans
+// OTELFormatter formats events as OpenTelemetry spans.
 type OTELFormatter struct {
 	tracer          trace.Tracer
-	spans           map[uint32]*OTELSpanInfo             // PID -> span info
-	tcpSpans        map[uint64]trace.Span                // socket addr -> TCP span
-	tcpStartTs      map[uint64]uint64                    // socket addr -> start timestamp
+	spans           map[uint32]*OTELSpanInfo // PID -> span info
+	tcpSpans        map[uint64]trace.Span    // socket addr -> TCP span
+	tcpStartTs      map[uint64]uint64        // socket addr -> start timestamp
 	traceID         trace.TraceID
 	resolver        *pseudo_reverse_dns.Resolver
 	bootTime        time.Time
@@ -45,7 +45,7 @@ type OTELFormatter struct {
 	metaCollector   *procmeta.Collector                  // process metadata collector
 }
 
-// NewOTELFormatter creates a new OTELFormatter
+// NewOTELFormatter creates a new OTELFormatter.
 func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_reverse_dns.Resolver, customAttrs []config.CustomAttribute) (*OTELFormatter, error) {
 	bootTime, err := getSystemBootTime()
 	if err != nil {
@@ -93,12 +93,12 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 	}, nil
 }
 
-// monotonicToWallClock converts a monotonic timestamp (nanoseconds since boot) to wall-clock time
+// monotonicToWallClock converts a monotonic timestamp (nanoseconds since boot) to wall-clock time.
 func (f *OTELFormatter) monotonicToWallClock(monotonicNanos uint64) time.Time {
 	return f.bootTime.Add(time.Duration(monotonicNanos))
 }
 
-// HandleEvent formats events as OpenTelemetry spans
+// HandleEvent formats events as OpenTelemetry spans.
 func (f *OTELFormatter) HandleEvent(event *bpf.Event) error {
 	switch event.Type {
 	case bpf.EVENT_EXEC:
@@ -218,7 +218,7 @@ func (f *OTELFormatter) handleProcessExit(event *bpf.Event) error {
 	return nil
 }
 
-// sanitizeAttributeName replaces any character not in [a-zA-Z0-9_] with underscore
+// sanitizeAttributeName replaces any character not in [a-zA-Z0-9_] with underscore.
 func sanitizeAttributeName(name string) string {
 	result := make([]byte, len(name))
 	for i := 0; i < len(name); i++ {
@@ -232,7 +232,7 @@ func sanitizeAttributeName(name string) string {
 	return string(result)
 }
 
-// evaluateCustomAttributes evaluates custom attribute expressions for a given PID
+// evaluateCustomAttributes evaluates custom attribute expressions for a given PID.
 func (f *OTELFormatter) evaluateCustomAttributes(pid uint32) ([]attribute.KeyValue, error) {
 	if len(f.customAttrs) == 0 {
 		return nil, nil
@@ -352,13 +352,14 @@ func (f *OTELFormatter) handleTCPClose(event *bpf.Event) error {
 
 	// Format IP addresses based on family
 	var destIP, srcIP string
-	if tcpData.Family == 2 { // AF_INET (IPv4)
+	switch tcpData.Family {
+	case 2: // AF_INET (IPv4)
 		destIP = net.IP(tcpData.Daddr[:4]).String()
 		srcIP = net.IP(tcpData.Saddr[:4]).String()
-	} else if tcpData.Family == 10 { // AF_INET6
+	case 10: // AF_INET6
 		destIP = net.IP(tcpData.Daddr[:]).String()
 		srcIP = net.IP(tcpData.Saddr[:]).String()
-	} else {
+	default:
 		destIP = fmt.Sprintf("unknown_family_%d", tcpData.Family)
 		srcIP = fmt.Sprintf("unknown_family_%d", tcpData.Family)
 	}
@@ -396,7 +397,7 @@ func (f *OTELFormatter) handleTCPClose(event *bpf.Event) error {
 	return nil
 }
 
-// generateOTELSpanID generates a random 8-byte span ID
+// generateOTELSpanID generates a random 8-byte span ID.
 func generateOTELSpanID() trace.SpanID {
 	var b [8]byte
 	_, _ = rand.Read(b[:])

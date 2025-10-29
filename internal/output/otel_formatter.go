@@ -6,12 +6,17 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"reflect"
 	"strings"
 	"time"
 
 	"sched_trace/internal/bpf"
+	"sched_trace/internal/config"
+	"sched_trace/internal/procmeta"
 	"sched_trace/internal/pseudo_reverse_dns"
 
+	"github.com/expr-lang/expr"
+	"github.com/expr-lang/expr/vm"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -26,17 +31,22 @@ type OTELSpanInfo struct {
 
 // OTELFormatter formats events as OpenTelemetry spans
 type OTELFormatter struct {
-	tracer     trace.Tracer
-	spans      map[uint32]*OTELSpanInfo // PID -> span info
-	tcpSpans   map[uint64]trace.Span    // socket addr -> TCP span
-	tcpStartTs map[uint64]uint64        // socket addr -> start timestamp
-	traceID    trace.TraceID
-	resolver   *pseudo_reverse_dns.Resolver
-	bootTime   time.Time
+	tracer          trace.Tracer
+	spans           map[uint32]*OTELSpanInfo             // PID -> span info
+	tcpSpans        map[uint64]trace.Span                // socket addr -> TCP span
+	tcpStartTs      map[uint64]uint64                    // socket addr -> start timestamp
+	traceID         trace.TraceID
+	resolver        *pseudo_reverse_dns.Resolver
+	bootTime        time.Time
+	processMetadata map[uint32]*procmeta.ProcessMetadata // PID -> process metadata
+	metadataErrors  map[uint32]error                     // PID -> metadata collection errors
+	customAttrs     []config.CustomAttribute             // custom attribute definitions
+	compiledExprs   []*vm.Program                        // pre-compiled expressions
+	metaCollector   *procmeta.Collector                  // process metadata collector
 }
 
 // NewOTELFormatter creates a new OTELFormatter
-func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_reverse_dns.Resolver) (*OTELFormatter, error) {
+func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_reverse_dns.Resolver, customAttrs []config.CustomAttribute) (*OTELFormatter, error) {
 	bootTime, err := getSystemBootTime()
 	if err != nil {
 		// Fallback: estimate boot time from current time - uptime
@@ -50,14 +60,36 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 		return nil, fmt.Errorf("invalid trace ID: %w", err)
 	}
 
+	// Pre-compile custom attribute expressions
+	compiledExprs := make([]*vm.Program, len(customAttrs))
+	for i, attr := range customAttrs {
+		// Define the environment for type checking
+		env := map[string]interface{}{
+			"env":     map[string]string{},
+			"args":    []string{},
+			"cmdline": "",
+		}
+
+		program, err := expr.Compile(attr.Expression, expr.Env(env))
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile expression for attribute %q: %w", attr.Name, err)
+		}
+		compiledExprs[i] = program
+	}
+
 	return &OTELFormatter{
-		tracer:     tracer,
-		spans:      make(map[uint32]*OTELSpanInfo),
-		tcpSpans:   make(map[uint64]trace.Span),
-		tcpStartTs: make(map[uint64]uint64),
-		traceID:    traceID,
-		resolver:   resolver,
-		bootTime:   bootTime,
+		tracer:          tracer,
+		spans:           make(map[uint32]*OTELSpanInfo),
+		tcpSpans:        make(map[uint64]trace.Span),
+		tcpStartTs:      make(map[uint64]uint64),
+		traceID:         traceID,
+		resolver:        resolver,
+		bootTime:        bootTime,
+		processMetadata: make(map[uint32]*procmeta.ProcessMetadata),
+		metadataErrors:  make(map[uint32]error),
+		customAttrs:     customAttrs,
+		compiledExprs:   compiledExprs,
+		metaCollector:   procmeta.NewCollector(),
 	}, nil
 }
 
@@ -114,6 +146,19 @@ func (f *OTELFormatter) handleProcessExec(event *bpf.Event) error {
 	// Ingest static sources for this PID (environ, cmdline)
 	f.resolver.HandleStaticSources(int(event.Pid))
 
+	// Collect process metadata for custom attributes
+	if len(f.customAttrs) > 0 {
+		metadata, err := f.metaCollector.Collect(int(event.Pid))
+		if err != nil {
+			// Store error to add as span attribute later
+			f.metadataErrors[event.Pid] = err
+		}
+		// Store metadata even if partial (some custom attributes may still work)
+		if metadata != nil {
+			f.processMetadata[event.Pid] = metadata
+		}
+	}
+
 	return nil
 }
 
@@ -138,6 +183,9 @@ func (f *OTELFormatter) handleProcessExit(event *bpf.Event) error {
 	// Calculate duration
 	duration := event.Timestamp - spanInfo.StartTime
 
+	// Evaluate custom attributes
+	customAttrs, _ := f.evaluateCustomAttributes(event.Pid)
+
 	// Set span attributes
 	spanInfo.Span.SetAttributes(
 		attribute.Int("process.pid", int(event.Pid)),
@@ -147,13 +195,103 @@ func (f *OTELFormatter) handleProcessExit(event *bpf.Event) error {
 		attribute.Int64("process.duration_ns", int64(duration)),
 	)
 
+	// Add custom attributes if any
+	if len(customAttrs) > 0 {
+		spanInfo.Span.SetAttributes(customAttrs...)
+	}
+
+	// Add metadata collection errors as span attributes if any
+	if metaErr, hasErr := f.metadataErrors[event.Pid]; hasErr {
+		spanInfo.Span.SetAttributes(
+			attribute.String("_tracing_error_0", metaErr.Error()),
+		)
+		delete(f.metadataErrors, event.Pid)
+	}
+
 	// End span with explicit end time
 	spanInfo.Span.End(trace.WithTimestamp(endTime))
 
-	// Clean up - but keep spanInfo for late TCP events that may reference this PID
+	// Clean up metadata and span info
+	delete(f.processMetadata, event.Pid)
 	delete(f.spans, event.Pid)
 
 	return nil
+}
+
+// sanitizeAttributeName replaces any character not in [a-zA-Z0-9_] with underscore
+func sanitizeAttributeName(name string) string {
+	result := make([]byte, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			result[i] = c
+		} else {
+			result[i] = '_'
+		}
+	}
+	return string(result)
+}
+
+// evaluateCustomAttributes evaluates custom attribute expressions for a given PID
+func (f *OTELFormatter) evaluateCustomAttributes(pid uint32) ([]attribute.KeyValue, error) {
+	if len(f.customAttrs) == 0 {
+		return nil, nil
+	}
+
+	metadata := f.processMetadata[pid]
+	if metadata == nil {
+		// No metadata available - return empty
+		return nil, nil
+	}
+
+	// Build evaluation environment
+	env := map[string]interface{}{
+		"env":     metadata.Environ,
+		"args":    metadata.Args,
+		"cmdline": metadata.CmdlineFull,
+	}
+
+	var attrs []attribute.KeyValue
+	for i, customAttr := range f.customAttrs {
+		// Run the pre-compiled program
+		output, err := expr.Run(f.compiledExprs[i], env)
+		if err != nil {
+			// Log error but continue with other attributes
+			fmt.Printf("Warning: failed to evaluate expression for attribute %q: %v\n", customAttr.Name, err)
+			continue
+		}
+
+		// Check if output is a map - if so, expand it into multiple attributes
+		outputValue := reflect.ValueOf(output)
+		if outputValue.Kind() == reflect.Map {
+			// Expand map into separate attributes with dot notation
+			for _, key := range outputValue.MapKeys() {
+				// Convert key to string and sanitize
+				keyStr := fmt.Sprintf("%v", key.Interface())
+				sanitizedKey := sanitizeAttributeName(keyStr)
+				attrName := customAttr.Name + "." + sanitizedKey
+
+				// Get the value
+				value := outputValue.MapIndex(key).Interface()
+
+				// Check if value is a nested map or slice - if so, use %v format
+				valueReflect := reflect.ValueOf(value)
+				if valueReflect.Kind() == reflect.Map || valueReflect.Kind() == reflect.Slice || valueReflect.Kind() == reflect.Array {
+					// Nested structure - use default Go format
+					attrs = append(attrs, attribute.String(attrName, fmt.Sprintf("%v", value)))
+				} else {
+					// Simple value - convert to string
+					attrs = append(attrs, attribute.String(attrName, fmt.Sprint(value)))
+				}
+			}
+		} else {
+			// Not a map - convert output to string attribute as before
+			attrValue := fmt.Sprint(output)
+			attrs = append(attrs, attribute.String(customAttr.Name, attrValue))
+		}
+	}
+
+	return attrs, nil
 }
 
 func (f *OTELFormatter) handleTCPConnect(event *bpf.Event) error {

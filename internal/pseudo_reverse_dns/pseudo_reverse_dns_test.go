@@ -4,20 +4,19 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEnvironSource(t *testing.T) {
 	// Test with current process (should always work)
 	source := &EnvironSource{}
 	endpoints, err := source.Extract(os.Getpid())
-	if err != nil {
-		t.Fatalf("EnvironSource.Extract failed: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should have at least some environment variables
-	if len(endpoints) == 0 {
-		t.Error("Expected at least some environment variables, got none")
-	}
+	assert.NotEmpty(t, endpoints, "Expected at least some environment variables")
 
 	// Check that we got actual values (not empty strings)
 	hasNonEmpty := false
@@ -27,23 +26,17 @@ func TestEnvironSource(t *testing.T) {
 			break
 		}
 	}
-	if !hasNonEmpty {
-		t.Error("All environment values were empty")
-	}
+	assert.True(t, hasNonEmpty, "All environment values were empty")
 }
 
 func TestCmdlineSource(t *testing.T) {
 	// Test with current process
 	source := &CmdlineSource{}
 	endpoints, err := source.Extract(os.Getpid())
-	if err != nil {
-		t.Fatalf("CmdlineSource.Extract failed: %v", err)
-	}
+	require.NoError(t, err)
 
 	// Should have at least the program name
-	if len(endpoints) == 0 {
-		t.Error("Expected at least the program name in cmdline, got nothing")
-	}
+	assert.NotEmpty(t, endpoints, "Expected at least the program name in cmdline")
 
 	// First argument should contain test or go (running under go test)
 	if len(endpoints) > 0 {
@@ -61,9 +54,7 @@ func TestResolverWithStaticSources(t *testing.T) {
 
 	// Run on current process
 	err := resolver.HandleStaticSources(os.Getpid())
-	if err != nil {
-		t.Fatalf("HandleStaticSources failed: %v", err)
-	}
+	require.NoError(t, err)
 
 	// We should have extracted something (the environment likely has hostnames/IPs)
 	if len(resolver.IPToHosts) == 0 && len(resolver.HostToIPs) == 0 {
@@ -122,11 +113,11 @@ func TestExtractEndpoints(t *testing.T) {
 				}
 			}
 
-			if tt.wantIPv4 && !hasIPv4 {
-				t.Errorf("Expected to extract IPv4, but didn't. IPToHosts: %v", resolver.IPToHosts)
+			if tt.wantIPv4 {
+				assert.True(t, hasIPv4, "Expected to extract IPv4. IPToHosts: %v", resolver.IPToHosts)
 			}
-			if tt.wantIPv6 && !hasIPv6 {
-				t.Errorf("Expected to extract IPv6, but didn't. IPToHosts: %v", resolver.IPToHosts)
+			if tt.wantIPv6 {
+				assert.True(t, hasIPv6, "Expected to extract IPv6. IPToHosts: %v", resolver.IPToHosts)
 			}
 			if tt.checkDNS && len(resolver.HostToIPs) == 0 {
 				t.Logf("Note: DNS resolution failed for hostname (may be OK in test environment)")
@@ -144,15 +135,11 @@ func TestLookup(t *testing.T) {
 
 	// Lookup should return both hostnames
 	hosts := resolver.Lookup("192.168.1.1")
-	if len(hosts) != 2 {
-		t.Errorf("Expected 2 hostnames, got %d: %v", len(hosts), hosts)
-	}
+	assert.Len(t, hosts, 2, "Expected 2 hostnames: %v", hosts)
 
 	// Lookup non-existent IP should return nil
 	hosts = resolver.Lookup("1.2.3.4")
-	if hosts != nil {
-		t.Errorf("Expected nil for non-existent IP, got %v", hosts)
-	}
+	assert.Nil(t, hosts, "Expected nil for non-existent IP")
 }
 
 func TestStaticSourceInterface(t *testing.T) {
@@ -177,9 +164,8 @@ func TestHandleDynamicSource(t *testing.T) {
 	resolver.HandleDynamicSource(1234, "file_read", []byte("some data"))
 
 	// Check that endpoints were extracted
-	if len(resolver.IPToHosts) == 0 && len(resolver.HostToIPs) == 0 {
-		t.Error("Expected dynamic source to populate resolver, but it's empty")
-	}
+	hasData := len(resolver.IPToHosts) > 0 || len(resolver.HostToIPs) > 0
+	assert.True(t, hasData, "Expected dynamic source to populate resolver")
 }
 
 // mockDynamicSource is a test implementation of DynamicSource

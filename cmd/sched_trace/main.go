@@ -98,7 +98,7 @@ func run() error {
 	resolver.AddStaticSource(&pseudo_reverse_dns.CmdlineSource{})
 
 	// Create event stream with OTEL formatter
-	formatter, err := output.NewOTELFormatter(tracer, cfg.TraceID, resolver)
+	formatter, err := output.NewOTELFormatter(tracer, cfg.TraceID, resolver, cfg.CustomAttributes)
 	if err != nil {
 		return fmt.Errorf("failed to create OTEL formatter: %w", err)
 	}

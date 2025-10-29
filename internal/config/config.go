@@ -7,6 +7,12 @@ import (
 	"strings"
 )
 
+// CustomAttribute represents a custom span attribute with an expression
+type CustomAttribute struct {
+	Name       string
+	Expression string
+}
+
 // Config holds the parsed command-line configuration
 type Config struct {
 	// Command is the executable to run
@@ -15,10 +21,12 @@ type Config struct {
 	Args []string
 	// TraceID is the OpenTelemetry trace ID (32 hex chars)
 	TraceID string
+	// CustomAttributes are user-defined span attributes with expressions
+	CustomAttributes []CustomAttribute
 }
 
 // ParseArgs parses command-line arguments and returns a Config.
-// Expected format: program_name [--trace-id <id>] -- <command> [args...]
+// Expected format: program_name [--trace-id <id>] [-a name expr]... -- <command> [args...]
 func ParseArgs(args []string) (*Config, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("no arguments provided")
@@ -26,6 +34,7 @@ func ParseArgs(args []string) (*Config, error) {
 
 	programName := args[0]
 	var traceID string
+	var customAttrs []CustomAttribute
 
 	// Find the "--" separator
 	cmdStart := -1
@@ -42,11 +51,25 @@ func ParseArgs(args []string) (*Config, error) {
 			}
 			traceID = args[i+1]
 			i++ // skip the value
+			continue
+		}
+
+		// Parse -a flag (custom attribute)
+		if args[i] == "-a" {
+			if i+2 >= len(args) {
+				return nil, fmt.Errorf("-a requires attribute name and expression")
+			}
+			customAttrs = append(customAttrs, CustomAttribute{
+				Name:       args[i+1],
+				Expression: args[i+2],
+			})
+			i += 2 // skip name and expression
+			continue
 		}
 	}
 
 	if cmdStart == -1 || cmdStart >= len(args) {
-		return nil, fmt.Errorf("Usage: %s [--trace-id <id>] -- <command> [args...]\nExample: %s -- bash -c 'echo hello'",
+		return nil, fmt.Errorf("Usage: %s [--trace-id <id>] [-a name expr]... -- <command> [args...]\nExample: %s -a env_name 'env[\"ENVIRONMENT\"]' -- bash -c 'echo hello'",
 			programName, programName)
 	}
 
@@ -72,9 +95,10 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 
 	return &Config{
-		Command: cmdArgs[0],
-		Args:    cmdArgs[1:],
-		TraceID: traceID,
+		Command:          cmdArgs[0],
+		Args:             cmdArgs[1:],
+		TraceID:          traceID,
+		CustomAttributes: customAttrs,
 	}, nil
 }
 

@@ -13,7 +13,9 @@
       "Bash(timeout 5 ./sched_trace:*)",
       "Bash(sysctl:*)",
       "Read(//usr/include/linux/**)",
-      "Read(//usr/include/netinet/**)"
+      "Read(//usr/include/netinet/**)",
+      "Bash(go get:*)",
+      "Bash(go test:*)"
     ],
     "deny": [],
     "ask": []

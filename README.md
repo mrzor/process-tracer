@@ -50,6 +50,12 @@ sudo ./sched_trace -- <command>
   - First vibe-code reproduction testcase
   - Then vibe-code fix
 
+- Applied software engineering to diminish the amount of vibe-coded nonsense is WELCOMED
+  - PREFER: pure functions, immutability, command-query separation and state machines
+  - AVOID: ye-old design pattern for manually allocated memory languages
+  - AVOID: excessive DRY / exhaustive testing / YAGNI features
+  - AVOID: dogmatism and blind rule-following
+
 ## Requirements
 
 - Linux kernel with BTF support

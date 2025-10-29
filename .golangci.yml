@@ -1,0 +1,147 @@
+version: '2'
+
+run:
+  timeout: 5m
+  tests: true
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    # Core quality linters (enabled by default in 2.x)
+    - errcheck        # Check unchecked errors
+    - govet           # Official Go tool
+    - ineffassign     # Detect ineffectual assignments
+    - staticcheck     # Advanced static analysis (includes gosimple)
+    - unused          # Detect unused code
+
+    # Style and best practices
+    - misspell        # Fix spelling mistakes
+    - revive          # Fast, configurable, extensible linter
+
+    # Code quality
+    - dupl            # Detect code duplication
+    - goconst         # Find repeated strings that could be constants
+    - gocyclo         # Cyclomatic complexity
+    - gosec           # Security issues
+    - unconvert       # Detect unnecessary type conversions
+    - gocritic        # Comprehensive Go linter
+
+    # Performance
+    - prealloc        # Find slice declarations that could be preallocated
+
+    # Errors
+    - errorlint       # Find misuses of error wrapping
+    - errname         # Check error naming conventions
+
+    # Testing
+    - testifylint     # Best practices for testify
+    - testpackage     # Enforce _test package naming
+
+    # Maintenance
+    - godot           # Check comments end in period
+    - nolintlint      # Enforce proper nolint directives
+
+formatters:
+  enable:
+    - gofmt           # Check formatting
+    - goimports       # Check imports
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  govet:
+    enable-all: true
+    disable:
+      - shadow  # Often too strict for eBPF code with reused variable names
+
+  gocyclo:
+    min-complexity: 15
+
+  dupl:
+    threshold: 100
+
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+    ignore-tests: true
+
+  misspell:
+    locale: US
+
+  revive:
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: dot-imports
+      - name: error-return
+      - name: error-strings
+      - name: error-naming
+      - name: exported
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: indent-error-flow
+      - name: errorf
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  gosec:
+    excludes:
+      - G404  # Allow weak random for non-crypto uses
+    config:
+      G306: "0644"  # File permissions for non-sensitive files
+
+  staticcheck:
+    checks: ["all"]
+
+  testifylint:
+    enable-all: true
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests
+    - path: _test\.go
+      linters:
+        - dupl
+        - gosec
+        - gocyclo
+
+    # Exclude generated eBPF files from most checks
+    - path: schedtrace_.*\.go
+      linters:
+        - all
+      text: ""
+
+    # Allow globals in main and eBPF loader code
+    - path: (main|loader)\.go
+      linters:
+        - gochecknoglobals
+
+    # Allow long functions in BPF loader (complex initialization)
+    - path: internal/bpfloader/
+      linters:
+        - funlen
+        - gocyclo
+
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+output:
+  formats:
+    colored-line-number:
+      path: stdout
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true

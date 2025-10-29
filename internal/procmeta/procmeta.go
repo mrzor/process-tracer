@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"sched_trace/internal/pseudo_reverse_dns"
+	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
 )
 
 // ProcessMetadata holds structured process information for expression evaluation.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"sched_trace/internal/bpf"
+	"github.com/mrzor/process-tracer/internal/bpf"
 )
 
 // EventHandler is the interface for handling BPF events.

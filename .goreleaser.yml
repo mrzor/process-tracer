@@ -5,9 +5,9 @@ before:
     - go mod tidy
 
 builds:
-  - id: sched_trace
-    main: ./cmd/sched_trace
-    binary: sched_trace
+  - id: process-tracer
+    main: ./cmd/process-tracer
+    binary: process-tracer
     env:
       - CGO_ENABLED=0
     goos:

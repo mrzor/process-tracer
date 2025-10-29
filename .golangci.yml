@@ -120,7 +120,7 @@ issues:
         - testpackage
 
     # Exclude generated eBPF files from most checks
-    - path: schedtrace_.*\.go
+    - path: processtracer_.*\.go
       linters:
         - all
       text: ""

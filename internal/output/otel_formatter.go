@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"sched_trace/internal/bpf"
-	"sched_trace/internal/config"
-	"sched_trace/internal/procmeta"
-	"sched_trace/internal/pseudo_reverse_dns"
+	"github.com/mrzor/process-tracer/internal/bpf"
+	"github.com/mrzor/process-tracer/internal/config"
+	"github.com/mrzor/process-tracer/internal/procmeta"
+	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"

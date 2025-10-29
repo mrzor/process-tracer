@@ -26,7 +26,9 @@
       "Bash(git log:*)",
       "Bash(git branch:*)",
       "Bash(golangci-lint linters:*)",
-      "Bash(gofmt:*)"
+      "Bash(gofmt:*)",
+      "Bash(mise install:*)",
+      "Bash(go generate:*)"
     ],
     "deny": [],
     "ask": []

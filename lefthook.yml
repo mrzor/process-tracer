@@ -3,7 +3,7 @@ pre-commit:
   commands:
     lint:
       glob: "*.go"
-      run: golangci-lint run --new-from-rev=HEAD {staged_files}
+      run: golangci-lint run --new-from-rev=HEAD ./...
     tests:
       glob: "*.go"
       run: go test -short ./...

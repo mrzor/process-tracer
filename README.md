@@ -1,4 +1,4 @@
-# go-ebpf-tracer
+# process-tracer
 
 An eBPF-based process and network tracer with OpenTelemetry span integration.
 
@@ -22,7 +22,7 @@ alternative. It may or may not improve over time.
 mise run go-build
 
 # Run
-sudo ./sched_trace -- <command>
+sudo ./process-tracer -- <command>
 ```
 
 ## Features

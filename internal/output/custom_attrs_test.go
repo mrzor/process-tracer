@@ -6,8 +6,8 @@ package output
 import (
 	"testing"
 
-	"sched_trace/internal/config"
-	"sched_trace/internal/procmeta"
+	"github.com/mrzor/process-tracer/internal/config"
+	"github.com/mrzor/process-tracer/internal/procmeta"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"

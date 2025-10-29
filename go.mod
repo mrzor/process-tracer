@@ -1,4 +1,4 @@
-module sched_trace
+module github.com/mrzor/process-tracer
 
 go 1.25
 

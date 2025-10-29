@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"sched_trace/internal/config"
+	"github.com/mrzor/process-tracer/internal/config"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"

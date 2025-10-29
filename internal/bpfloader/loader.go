@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"sched_trace/internal/bpf"
+	"github.com/mrzor/process-tracer/internal/bpf"
 
 	"github.com/cilium/ebpf/link"
 	"github.com/cilium/ebpf/ringbuf"
@@ -13,7 +13,7 @@ import (
 
 // Loader manages the lifecycle of BPF programs and their attachments.
 type Loader struct {
-	objs              bpf.SchedTraceObjects
+	objs              bpf.ProcessTracerObjects
 	execLink          link.Link
 	exitLink          link.Link
 	tcpCloseLink      link.Link
@@ -27,7 +27,7 @@ type Loader struct {
 func New() (*Loader, error) {
 	l := &Loader{}
 
-	if err := bpf.LoadSchedTraceObjects(&l.objs, nil); err != nil {
+	if err := bpf.LoadProcessTracerObjects(&l.objs, nil); err != nil {
 		return nil, fmt.Errorf("loading BPF objects: %w", err)
 	}
 

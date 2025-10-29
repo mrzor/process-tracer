@@ -8,8 +8,8 @@ import (
 	"errors"
 	"log"
 
-	"sched_trace/internal/bpf"
-	"sched_trace/internal/output"
+	"github.com/mrzor/process-tracer/internal/bpf"
+	"github.com/mrzor/process-tracer/internal/output"
 
 	"github.com/cilium/ebpf/ringbuf"
 )

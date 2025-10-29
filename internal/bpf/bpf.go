@@ -1,4 +1,4 @@
-// Package bpf provides Go bindings for the eBPF scheduler tracer.
+// Package bpf provides Go bindings for the eBPF process tracer.
 package bpf
 
 import (
@@ -7,7 +7,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 schedTrace ./sched_trace.bpf.c -- -I. -I/usr/include
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 processTracer ./process_tracer.bpf.c -- -I. -I/usr/include
 
 // Event type constants matching kernel/C conventions.
 //
@@ -19,7 +19,7 @@ const (
 	EVENT_TCP_CLOSE   = 4
 )
 
-// Event matches the C struct from sched_trace.h.
+// Event matches the C struct from process_tracer.h.
 // Using explicit struct layout to match C union.
 type Event struct {
 	Pid       uint32
@@ -74,16 +74,16 @@ type TCPEventData struct {
 	_      uint16 // Padding
 }
 
-// SchedTraceObjects provides access to the loaded BPF objects.
-type SchedTraceObjects = schedTraceObjects
+// ProcessTracerObjects provides access to the loaded BPF objects.
+type ProcessTracerObjects = processTracerObjects
 
-// SchedTracePrograms provides access to the BPF programs.
-type SchedTracePrograms = schedTracePrograms
+// ProcessTracerPrograms provides access to the BPF programs.
+type ProcessTracerPrograms = processTracerPrograms
 
-// SchedTraceMaps provides access to the BPF maps.
-type SchedTraceMaps = schedTraceMaps
+// ProcessTracerMaps provides access to the BPF maps.
+type ProcessTracerMaps = processTracerMaps
 
-// LoadSchedTraceObjects loads the BPF programs and maps.
-func LoadSchedTraceObjects(obj *schedTraceObjects, opts *ebpf.CollectionOptions) error {
-	return loadSchedTraceObjects(obj, opts)
+// LoadProcessTracerObjects loads the BPF programs and maps.
+func LoadProcessTracerObjects(obj *processTracerObjects, opts *ebpf.CollectionOptions) error {
+	return loadProcessTracerObjects(obj, opts)
 }

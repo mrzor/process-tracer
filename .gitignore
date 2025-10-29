@@ -6,7 +6,7 @@
 *.dylib
 
 # Compiled Go binaries
-sched_trace
+process-tracer
 
 # Test binary, built with `go test -c`
 *.test

@@ -1,5 +1,5 @@
-#ifndef __SCHED_TRACE_H
-#define __SCHED_TRACE_H
+#ifndef __PROCESS_TRACER_H
+#define __PROCESS_TRACER_H
 
 #define TASK_COMM_LEN 16
 
@@ -45,4 +45,4 @@ struct tcp_span_info {
     __u16 family;
 };
 
-#endif /* __SCHED_TRACE_H */
+#endif /* __PROCESS_TRACER_H */

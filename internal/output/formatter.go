@@ -22,7 +22,9 @@ func getSystemBootTime() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to open /proc/stat: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {

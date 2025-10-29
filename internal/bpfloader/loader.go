@@ -1,3 +1,4 @@
+// Package bpfloader manages the lifecycle of eBPF programs and their kernel attachments.
 package bpfloader
 
 import (
@@ -36,26 +37,27 @@ func New() (*Loader, error) {
 // closeErrorf closes all attached links and returns a formatted error.
 func (l *Loader) closeErrorf(errstr string, e error) error {
 	// Close all links that may have been attached (nil-safe)
+	// We intentionally ignore errors during cleanup here since we're already in an error path
 	if l.tcpCloseLink != nil {
-		l.tcpCloseLink.Close()
+		_ = l.tcpCloseLink.Close()
 	}
 	if l.tcpV6ConnectExit != nil {
-		l.tcpV6ConnectExit.Close()
+		_ = l.tcpV6ConnectExit.Close()
 	}
 	if l.tcpV6ConnectEntry != nil {
-		l.tcpV6ConnectEntry.Close()
+		_ = l.tcpV6ConnectEntry.Close()
 	}
 	if l.tcpV4ConnectExit != nil {
-		l.tcpV4ConnectExit.Close()
+		_ = l.tcpV4ConnectExit.Close()
 	}
 	if l.tcpV4ConnectEntry != nil {
-		l.tcpV4ConnectEntry.Close()
+		_ = l.tcpV4ConnectEntry.Close()
 	}
 	if l.exitLink != nil {
-		l.exitLink.Close()
+		_ = l.exitLink.Close()
 	}
 	if l.execLink != nil {
-		l.execLink.Close()
+		_ = l.execLink.Close()
 	}
 	return fmt.Errorf("%s: %w", errstr, e)
 }
@@ -117,6 +119,7 @@ func (l *Loader) OpenRingBuffer() (*ringbuf.Reader, error) {
 
 // TrackPID adds a PID to the tracked_pids map in the BPF program.
 func (l *Loader) TrackPID(pid int) error {
+	//nolint:gosec // int to uint32 conversion required for BPF map key type
 	pidKey := uint32(pid)
 	val := uint8(1)
 	if err := l.objs.TrackedPids.Put(&pidKey, &val); err != nil {

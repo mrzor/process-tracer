@@ -1,3 +1,4 @@
+// Package otel provides OpenTelemetry tracer provider initialization and management.
 package otel
 
 import (
@@ -18,7 +19,7 @@ import (
 // verifyConnection attempts to establish a connection to the OTLP endpoint
 // to verify it's reachable before proceeding. This ensures we fail fast if
 // the collector is unavailable.
-func verifyConnection(ctx context.Context, endpoint string) error {
+func verifyConnection(_ context.Context, endpoint string) error {
 	// Log proxy configuration for debugging
 	httpProxy := os.Getenv("HTTP_PROXY")
 	if httpProxy == "" {
@@ -49,7 +50,7 @@ func verifyConnection(ctx context.Context, endpoint string) error {
 //
 // Note: Uses OTLP/HTTP protocol. The HTTP client automatically honors HTTP_PROXY,
 // HTTPS_PROXY, and NO_PROXY environment variables through Go's standard net/http transport.
-func InitProvider(cfg *config.OTELConfig, traceIDHex string) (*sdktrace.TracerProvider, error) {
+func InitProvider(cfg *config.OTELConfig, _ string) (*sdktrace.TracerProvider, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -108,6 +109,8 @@ func InitProvider(cfg *config.OTELConfig, traceIDHex string) (*sdktrace.TracerPr
 }
 
 // ShutdownProvider gracefully shuts down the tracer provider, flushing any remaining spans.
+//
+//nolint:revive // ctx as second param is idiomatic for cleanup/shutdown functions
 func ShutdownProvider(tp *sdktrace.TracerProvider, ctx context.Context) error {
 	if tp == nil {
 		return nil

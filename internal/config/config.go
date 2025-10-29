@@ -1,3 +1,4 @@
+// Package config handles command-line argument parsing and OpenTelemetry configuration.
 package config
 
 import (
@@ -69,6 +70,7 @@ func ParseArgs(args []string) (*Config, error) {
 	}
 
 	if cmdStart == -1 || cmdStart >= len(args) {
+		//nolint:staticcheck // Usage strings conventionally start with "Usage:"
 		return nil, fmt.Errorf("Usage: %s [--trace-id <id>] [-a name expr]... -- <command> [args...]\nExample: %s -a env_name 'env[\"ENVIRONMENT\"]' -- bash -c 'echo hello'",
 			programName, programName)
 	}

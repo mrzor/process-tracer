@@ -1,3 +1,4 @@
+// sched_trace is an eBPF-based process and network tracer with OpenTelemetry span integration.
 package main
 
 import (
@@ -78,7 +79,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer loader.Close()
+	defer func() {
+		if err := loader.Close(); err != nil {
+			log.Printf("Error closing loader: %v", err)
+		}
+	}()
 
 	// Attach tracepoints
 	if err := loader.Attach(); err != nil {
@@ -90,7 +95,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer rd.Close()
+	defer func() {
+		if err := rd.Close(); err != nil {
+			log.Printf("Error closing ring buffer: %v", err)
+		}
+	}()
 
 	// Initialize pseudo reverse DNS resolver
 	resolver := pseudo_reverse_dns.New()
@@ -112,13 +121,18 @@ func run() error {
 	if err := stream.Start(ctx); err != nil {
 		return err
 	}
-	defer stream.Stop()
+	defer func() {
+		if err := stream.Stop(); err != nil {
+			log.Printf("Error stopping stream: %v", err)
+		}
+	}()
 
 	// Handle signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	// Fork and exec the target command
+	//nolint:gosec // This is a tracer tool - launching subprocesses is its purpose
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -136,7 +150,7 @@ func run() error {
 	// Add child PID to tracked map
 	childPid := cmd.Process.Pid
 	if err := loader.TrackPID(childPid); err != nil {
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 		return err
 	}
 
@@ -152,10 +166,10 @@ func run() error {
 	select {
 	case <-sigCh:
 		log.Println("Received signal, terminating...")
-		cmd.Process.Signal(syscall.SIGTERM)
+		_ = cmd.Process.Signal(syscall.SIGTERM)
 		// Give it a moment to exit gracefully
 		time.Sleep(100 * time.Millisecond)
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 	case err := <-childDone:
 		if err != nil {
 			log.Printf("Child process exited with error: %v", err)

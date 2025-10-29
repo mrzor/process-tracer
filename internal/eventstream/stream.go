@@ -1,3 +1,4 @@
+// Package eventstream manages the processing of eBPF ring buffer events.
 package eventstream
 
 import (

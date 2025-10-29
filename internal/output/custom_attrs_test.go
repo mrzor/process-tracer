@@ -1,3 +1,6 @@
+// Test file for custom_attrs.go functionality.
+//
+//nolint:testpackage // Testing internal implementation details
 package output
 
 import (

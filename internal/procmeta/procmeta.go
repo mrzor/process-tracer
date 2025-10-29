@@ -1,3 +1,4 @@
+// Package procmeta collects process metadata from /proc filesystem.
 package procmeta
 
 import (

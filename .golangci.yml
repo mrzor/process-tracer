@@ -116,6 +116,8 @@ issues:
         - dupl
         - gosec
         - gocyclo
+        - revive
+        - testpackage
 
     # Exclude generated eBPF files from most checks
     - path: schedtrace_.*\.go
@@ -133,6 +135,42 @@ issues:
       linters:
         - funlen
         - gocyclo
+
+    # Allow prealloc for slices where size is unknown
+    - path: internal/pseudo_reverse_dns/
+      linters:
+        - prealloc
+
+    # Allow context as second parameter in shutdown function (idiomatic for cleanup)
+    - text: "context.Context should be the first parameter"
+      linters:
+        - revive
+
+    # Usage strings typically start with "Usage:" which is capitalized
+    - text: "error strings should not be capitalized"
+      path: internal/config/config.go
+      linters:
+        - staticcheck
+
+    # eBPF requires unsafe for C struct interop
+    - text: "G103:"
+      linters:
+        - gosec
+
+    # This is a tracer - it needs to launch subprocesses
+    - text: "G204:"
+      linters:
+        - gosec
+
+    # Need to read from /proc filesystem for process metadata
+    - text: "G304:"
+      linters:
+        - gosec
+
+    # Integer conversions required for eBPF/kernel data types
+    - text: "G115:"
+      linters:
+        - gosec
 
   max-issues-per-linter: 0
   max-same-issues: 0

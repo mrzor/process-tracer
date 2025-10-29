@@ -25,7 +25,8 @@
       "Read(//tmp/**)",
       "Bash(git log:*)",
       "Bash(git branch:*)",
-      "Bash(golangci-lint linters:*)"
+      "Bash(golangci-lint linters:*)",
+      "Bash(gofmt:*)"
     ],
     "deny": [],
     "ask": []

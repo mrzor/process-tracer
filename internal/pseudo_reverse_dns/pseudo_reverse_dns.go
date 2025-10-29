@@ -43,6 +43,7 @@ type DynamicSource interface {
 	OnEvent(pid int, eventType string, data []byte) []string
 }
 
+// HostMapping stores resolved IP addresses and their original endpoint names.
 type HostMapping struct {
 	IPs       []string
 	Originals []string
@@ -127,6 +128,7 @@ func (r *Resolver) HandleDynamicSource(pid int, eventType string, data []byte) {
 // Deprecated: Use HandleStaticSources with EnvironSource instead.
 func (r *Resolver) ResolveFromPID(pid int) error {
 	environPath := fmt.Sprintf("/proc/%d/environ", pid)
+	//nolint:gosec // Reading from /proc is safe and necessary for process metadata
 	data, err := os.ReadFile(environPath)
 	if err != nil {
 		return fmt.Errorf("failed to read %s: %w", environPath, err)
@@ -249,7 +251,7 @@ func (r *Resolver) addIPMapping(ip, hostname string) {
 	}
 }
 
-func (r *Resolver) addOriginal(s string) {
+func (r *Resolver) addOriginal(_ string) {
 }
 
 // Lookup returns possible hostnames for a given IP address.
@@ -288,11 +290,13 @@ type EnvironSource struct{}
 // Extract reads the process environment variables and returns their values.
 func (e *EnvironSource) Extract(pid int) ([]string, error) {
 	environPath := fmt.Sprintf("/proc/%d/environ", pid)
+	//nolint:gosec // Reading from /proc is safe and necessary for process metadata
 	data, err := os.ReadFile(environPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", environPath, err)
 	}
 
+	//nolint:prealloc // Size is unknown until parsing
 	var endpoints []string
 	envVars := bytes.Split(data, []byte{0})
 	for _, envVar := range envVars {
@@ -316,6 +320,7 @@ type CmdlineSource struct{}
 // Extract reads the process command line and returns the arguments.
 func (c *CmdlineSource) Extract(pid int) ([]string, error) {
 	cmdlinePath := fmt.Sprintf("/proc/%d/cmdline", pid)
+	//nolint:gosec // Reading from /proc is safe and necessary for process metadata
 	data, err := os.ReadFile(cmdlinePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", cmdlinePath, err)
@@ -323,6 +328,7 @@ func (c *CmdlineSource) Extract(pid int) ([]string, error) {
 
 	// cmdline is null-byte separated arguments
 	args := bytes.Split(data, []byte{0})
+	//nolint:prealloc // Size is unknown until parsing
 	var endpoints []string
 	for _, arg := range args {
 		if len(arg) == 0 {

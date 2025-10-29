@@ -3,7 +3,6 @@ package output
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"fmt"
 	"net"
 	"reflect"
@@ -95,6 +94,7 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 
 // monotonicToWallClock converts a monotonic timestamp (nanoseconds since boot) to wall-clock time.
 func (f *OTELFormatter) monotonicToWallClock(monotonicNanos uint64) time.Time {
+	//nolint:gosec // uint64 to int64 conversion for time.Duration is safe for reasonable timestamps
 	return f.bootTime.Add(time.Duration(monotonicNanos))
 }
 
@@ -131,7 +131,7 @@ func (f *OTELFormatter) handleProcessExec(event *bpf.Event) error {
 	startTime := f.monotonicToWallClock(event.Timestamp)
 
 	// Start span with explicit start time
-	ctx, span := f.tracer.Start(ctx, "process.exec",
+	_, span := f.tracer.Start(ctx, "process.exec",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(startTime),
 	)
@@ -144,7 +144,7 @@ func (f *OTELFormatter) handleProcessExec(event *bpf.Event) error {
 	}
 
 	// Ingest static sources for this PID (environ, cmdline)
-	f.resolver.HandleStaticSources(int(event.Pid))
+	_ = f.resolver.HandleStaticSources(int(event.Pid))
 
 	// Collect process metadata for custom attributes
 	if len(f.customAttrs) > 0 {
@@ -187,6 +187,7 @@ func (f *OTELFormatter) handleProcessExit(event *bpf.Event) error {
 	customAttrs, _ := f.evaluateCustomAttributes(event.Pid)
 
 	// Set span attributes
+	//nolint:gosec // uint64 to int64 conversion for duration is safe
 	spanInfo.Span.SetAttributes(
 		attribute.Int("process.pid", int(event.Pid)),
 		attribute.Int("process.parent_pid", int(event.Ppid)),
@@ -316,7 +317,7 @@ func (f *OTELFormatter) handleTCPConnect(event *bpf.Event) error {
 	startTime := f.monotonicToWallClock(event.Timestamp)
 
 	// Start TCP connection span as child of process span
-	ctx, span := f.tracer.Start(ctx, "tcp.connect",
+	_, span := f.tracer.Start(ctx, "tcp.connect",
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithTimestamp(startTime),
 	)
@@ -365,6 +366,7 @@ func (f *OTELFormatter) handleTCPClose(event *bpf.Event) error {
 	}
 
 	// Set span attributes using semantic conventions
+	//nolint:gosec // uint64 to int64 conversion for duration is safe
 	attrs := []attribute.KeyValue{
 		attribute.Int("process.pid", int(event.Pid)),
 		attribute.String("net.peer.ip", destIP),
@@ -395,11 +397,4 @@ func (f *OTELFormatter) handleTCPClose(event *bpf.Event) error {
 	delete(f.tcpStartTs, tcpData.Skaddr)
 
 	return nil
-}
-
-// generateOTELSpanID generates a random 8-byte span ID.
-func generateOTELSpanID() trace.SpanID {
-	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return trace.SpanID(b)
 }

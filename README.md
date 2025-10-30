@@ -40,8 +40,22 @@ sudo mise setcap
 
 # Set trace_id (defaults to a random one)
 ./process-tracer --trace-id a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
+
 # Or use short form
 ./process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
+
+# expr-based trace-id
+./process-tracer -t 'env["TRACE_ID"]' -- echo hello
+
+# When the expression does not evaluate to a valid trace id, it will be
+# SHA-256'd to transmute it into one
+./process-tracer -t 'env["SHORT_ID"]' -- echo hello
+
+# Set parent_id (defaults to no parent id)
+./process-tracer --parent-id 0123456789abcdef -- command ...
+
+# Or use expr-based parent-id
+./process-tracer -p 'env["PARENT_SPAN_ID"]' -- command ...
 
 # Set extra attributes from environment (using NAME=EXPR format)
 ./process-tracer -a extra.attribute.name='env["EXTRA_ATTR"]' -- command ...

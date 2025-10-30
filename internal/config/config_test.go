@@ -2,12 +2,13 @@
 package config
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const testParentID = "0123456789abcdef"
 
 func TestParseArgs_BasicCommand(t *testing.T) {
 	args := []string{"process-tracer", "--", "echo", "hello"}
@@ -40,29 +41,70 @@ func TestParseArgs_WithTraceIDShortForm(t *testing.T) {
 	assert.Equal(t, traceID, cfg.TraceID)
 }
 
-func TestParseArgs_TraceIDCaseInsensitive(t *testing.T) {
-	traceID := "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4"
+func TestParseArgs_TraceIDAsExpression(t *testing.T) {
+	// Trace IDs can now be expressions
+	traceIDExpr := `env["TRACE_ID"]`
+	args := []string{"process-tracer", "-t", traceIDExpr, "--", "ls"}
+
+	cfg, err := ParseArgs(args)
+	require.NoError(t, err)
+	assert.Equal(t, traceIDExpr, cfg.TraceID)
+}
+
+func TestParseArgs_TraceIDAsLiteralHex(t *testing.T) {
+	// Literal hex strings are still valid (they're also valid expressions)
+	traceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 	args := []string{"process-tracer", "-t", traceID, "--", "ls"}
 
 	cfg, err := ParseArgs(args)
 	require.NoError(t, err)
-	assert.Equal(t, strings.ToLower(traceID), cfg.TraceID)
+	assert.Equal(t, traceID, cfg.TraceID)
 }
 
-func TestParseArgs_InvalidTraceIDTooShort(t *testing.T) {
-	args := []string{"process-tracer", "-t", "abc123", "--", "ls"}
+func TestParseArgs_TraceIDShortString(t *testing.T) {
+	// Short strings are now allowed (will be hashed to trace ID at runtime)
+	shortID := "abc123"
+	args := []string{"process-tracer", "-t", shortID, "--", "ls"}
 
-	_, err := ParseArgs(args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "32 hex characters")
+	cfg, err := ParseArgs(args)
+	require.NoError(t, err)
+	assert.Equal(t, shortID, cfg.TraceID)
 }
 
-func TestParseArgs_InvalidTraceIDNonHex(t *testing.T) {
-	args := []string{"process-tracer", "-t", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "--", "ls"}
+func TestParseArgs_WithParentID(t *testing.T) {
+	args := []string{"process-tracer", "--parent-id", testParentID, "--", "ls"}
 
-	_, err := ParseArgs(args)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "hex")
+	cfg, err := ParseArgs(args)
+	require.NoError(t, err)
+	assert.Equal(t, testParentID, cfg.ParentID)
+	assert.Equal(t, "ls", cfg.Command)
+}
+
+func TestParseArgs_WithParentIDShortForm(t *testing.T) {
+	args := []string{"process-tracer", "-p", testParentID, "--", "ls"}
+
+	cfg, err := ParseArgs(args)
+	require.NoError(t, err)
+	assert.Equal(t, testParentID, cfg.ParentID)
+}
+
+func TestParseArgs_ParentIDAsExpression(t *testing.T) {
+	parentIDExpr := `env["PARENT_SPAN_ID"]`
+	args := []string{"process-tracer", "-p", parentIDExpr, "--", "ls"}
+
+	cfg, err := ParseArgs(args)
+	require.NoError(t, err)
+	assert.Equal(t, parentIDExpr, cfg.ParentID)
+}
+
+func TestParseArgs_WithTraceIDAndParentID(t *testing.T) {
+	traceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+	args := []string{"process-tracer", "-t", traceID, "-p", testParentID, "--", "ls"}
+
+	cfg, err := ParseArgs(args)
+	require.NoError(t, err)
+	assert.Equal(t, traceID, cfg.TraceID)
+	assert.Equal(t, testParentID, cfg.ParentID)
 }
 
 func TestParseArgs_SingleCustomAttribute(t *testing.T) {

@@ -23,16 +23,19 @@ type Config struct {
 	Command string
 	// Args are the arguments to pass to the command
 	Args []string
-	// TraceID is the OpenTelemetry trace ID (32 hex chars)
+	// TraceID is the OpenTelemetry trace ID (expr expression or 32 hex chars)
 	TraceID string
+	// ParentID is the OpenTelemetry parent span ID for the root span (expr expression or 16 hex chars)
+	ParentID string
 	// CustomAttributes are user-defined span attributes with expressions
 	CustomAttributes []CustomAttribute
 }
 
 // ParseArgs parses command-line arguments using urfave/cli and returns a Config.
-// Expected format: program_name [--trace-id <id>] [-a name=expr]... -- <command> [args...].
+// Expected format: program_name [--trace-id <id>] [--parent-id <id>] [-a name=expr]... -- <command> [args...].
 func ParseArgs(args []string) (*Config, error) {
 	var traceID string
+	var parentID string
 	var customAttrs []CustomAttribute
 	var attrArgs []string
 	var resultCfg *Config
@@ -52,19 +55,22 @@ func ParseArgs(args []string) (*Config, error) {
 			&cli.StringFlag{
 				Name:    "trace-id",
 				Aliases: []string{"t"},
-				Usage:   "OpenTelemetry trace ID (32 hex characters, auto-generated if not provided)",
+				Usage:   "OpenTelemetry trace ID (expr expression or 32 hex chars, auto-generated if not provided)",
 				Action: func(_ context.Context, _ *cli.Command, s string) error {
-					if s == "" {
-						return nil
+					if s != "" {
+						traceID = s
 					}
-					// Validate: must be 32 hex chars
-					if len(s) != 32 {
-						return fmt.Errorf("trace ID must be 32 hex characters, got %d", len(s))
+					return nil
+				},
+			},
+			&cli.StringFlag{
+				Name:    "parent-id",
+				Aliases: []string{"p"},
+				Usage:   "OpenTelemetry parent span ID for root span (expr expression or 16 hex chars, null if not provided)",
+				Action: func(_ context.Context, _ *cli.Command, s string) error {
+					if s != "" {
+						parentID = s
 					}
-					if _, err := hex.DecodeString(s); err != nil {
-						return fmt.Errorf("trace ID must be valid hex: %w", err)
-					}
-					traceID = strings.ToLower(s)
 					return nil
 				},
 			},
@@ -120,6 +126,7 @@ func ParseArgs(args []string) (*Config, error) {
 				Command:          cmdArgs[0],
 				Args:             cmdArgs[1:],
 				TraceID:          traceID,
+				ParentID:         parentID,
 				CustomAttributes: customAttrs,
 			}
 

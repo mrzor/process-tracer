@@ -3,6 +3,8 @@ package output
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"reflect"
@@ -65,10 +67,16 @@ type OTELFormatter struct {
 	envChunks        map[uint32]*EnvChunkBuffer           // PID -> environment chunk buffer
 	envVarCollectors map[uint32]*EnvVarCollector          // PID -> streaming env var collector
 	envCaptureIssues map[uint32][]string                  // PID -> list of warnings/issues
+	traceIDExpr      *vm.Program                          // compiled trace-id expression
+	parentIDExpr     *vm.Program                          // compiled parent-id expression
+	traceIDRaw       string                               // raw trace-id expression string
+	parentIDRaw      string                               // raw parent-id expression string
+	rootSpanPID      uint32                               // PID of the root span (0 if not set)
+	rootSpanWarnings []attribute.KeyValue                 // warnings to attach to root span
 }
 
 // NewOTELFormatter creates a new OTELFormatter.
-func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_reverse_dns.Resolver, customAttrs []config.CustomAttribute) (*OTELFormatter, error) {
+func NewOTELFormatter(tracer trace.Tracer, traceIDExpr string, parentIDExpr string, resolver *pseudo_reverse_dns.Resolver, customAttrs []config.CustomAttribute) (*OTELFormatter, error) {
 	bootTime, err := getSystemBootTime()
 	if err != nil {
 		// Fallback: estimate boot time from current time - uptime
@@ -76,23 +84,37 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 		bootTime = time.Now().Add(-time.Hour) // Conservative fallback
 	}
 
-	// Parse trace ID from hex string
-	traceID, err := trace.TraceIDFromHex(traceIDHex)
-	if err != nil {
-		return nil, fmt.Errorf("invalid trace ID: %w", err)
+	// Define the environment for expression type checking
+	exprEnv := map[string]interface{}{
+		"env":     map[string]string{},
+		"args":    []string{},
+		"cmdline": "",
+	}
+
+	// Compile trace-id expression
+	var traceIDProgram *vm.Program
+	if traceIDExpr != "" {
+		program, err := expr.Compile(traceIDExpr, expr.Env(exprEnv))
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile trace-id expression: %w", err)
+		}
+		traceIDProgram = program
+	}
+
+	// Compile parent-id expression (if provided)
+	var parentIDProgram *vm.Program
+	if parentIDExpr != "" {
+		program, err := expr.Compile(parentIDExpr, expr.Env(exprEnv))
+		if err != nil {
+			return nil, fmt.Errorf("failed to compile parent-id expression: %w", err)
+		}
+		parentIDProgram = program
 	}
 
 	// Pre-compile custom attribute expressions
 	compiledExprs := make([]*vm.Program, len(customAttrs))
 	for i, attr := range customAttrs {
-		// Define the environment for type checking
-		env := map[string]interface{}{
-			"env":     map[string]string{},
-			"args":    []string{},
-			"cmdline": "",
-		}
-
-		program, err := expr.Compile(attr.Expression, expr.Env(env))
+		program, err := expr.Compile(attr.Expression, expr.Env(exprEnv))
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile expression for attribute %q: %w", attr.Name, err)
 		}
@@ -104,7 +126,7 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 		spans:            make(map[uint32]*OTELSpanInfo),
 		tcpSpans:         make(map[uint64]trace.Span),
 		tcpStartTs:       make(map[uint64]uint64),
-		traceID:          traceID,
+		traceID:          trace.TraceID{}, // Will be set when root span is created
 		resolver:         resolver,
 		bootTime:         bootTime,
 		processMetadata:  make(map[uint32]*procmeta.ProcessMetadata),
@@ -114,6 +136,12 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 		envChunks:        make(map[uint32]*EnvChunkBuffer),
 		envVarCollectors: make(map[uint32]*EnvVarCollector),
 		envCaptureIssues: make(map[uint32][]string),
+		traceIDExpr:      traceIDProgram,
+		parentIDExpr:     parentIDProgram,
+		traceIDRaw:       traceIDExpr,
+		parentIDRaw:      parentIDExpr,
+		rootSpanPID:      0,
+		rootSpanWarnings: nil,
 	}, nil
 }
 
@@ -407,15 +435,90 @@ func (f *OTELFormatter) finalizeEnvVarCollection(pid uint32, collector *EnvVarCo
 }
 
 func (f *OTELFormatter) handleProcessExec(event *bpf.Event) error {
-	// Determine parent span context by looking up parent PID
+	// Determine if this is the root span (first process with no tracked parent)
+	isRootSpan := false
 	var parentSpanCtx trace.SpanContext
 	if parent, exists := f.spans[event.Ppid]; exists {
 		parentSpanCtx = parent.SpanCtx
+	} else if f.rootSpanPID == 0 {
+		// No parent tracked and no root span set yet - this is the root
+		isRootSpan = true
+		f.rootSpanPID = event.Pid
 	}
 
-	// Create context with parent if it exists
+	// Create context - for root span, try to inject custom trace ID and parent ID
 	ctx := context.Background()
-	if parentSpanCtx.IsValid() {
+
+	if isRootSpan && (f.traceIDExpr != nil || f.parentIDExpr != nil) {
+		// Try to evaluate expressions for root span
+		// If metadata is available, evaluate now; otherwise, store warnings
+		var customTraceID trace.TraceID
+		var customParentID trace.SpanID
+		var allWarnings []attribute.KeyValue
+
+		// Evaluate trace-id if expression is provided
+		if f.traceIDExpr != nil {
+			traceID, warnings, err := f.evaluateAndValidateTraceID(event.Pid)
+			if err != nil {
+				// Metadata not available yet or evaluation failed
+				// Use a warning and generate a random trace ID
+				allWarnings = append(allWarnings,
+					attribute.String("_trace_id_evaluation_error", fmt.Sprintf("Failed to evaluate trace-id expression: %v", err)),
+				)
+			} else {
+				customTraceID = traceID
+				allWarnings = append(allWarnings, warnings...)
+			}
+		}
+
+		// Evaluate parent-id if expression is provided
+		if f.parentIDExpr != nil {
+			parentID, warnings, err := f.evaluateAndValidateParentID(event.Pid)
+			if err != nil {
+				// Metadata not available yet or evaluation failed - use zero span ID
+				allWarnings = append(allWarnings,
+					attribute.String("_parent_id_evaluation_error", fmt.Sprintf("Failed to evaluate parent-id expression: %v", err)),
+				)
+			} else {
+				customParentID = parentID
+				allWarnings = append(allWarnings, warnings...)
+			}
+		}
+
+		// Store warnings to add to the span later
+		if len(allWarnings) > 0 {
+			f.rootSpanWarnings = allWarnings
+		}
+
+		// Create custom span context to inject trace ID and/or parent ID
+		// If we have a custom trace ID or parent ID, create a parent span context
+		if customTraceID.IsValid() || customParentID.IsValid() {
+			// Use custom trace ID if provided, otherwise generate one
+			traceIDToUse := customTraceID
+			if !traceIDToUse.IsValid() {
+				// No custom trace ID - use f.traceID if set, or it will be inherited from tracer
+				traceIDToUse = f.traceID
+			}
+
+			// Create parent span context with custom trace ID and parent span ID
+			spanCtxConfig := trace.SpanContextConfig{
+				TraceID:    traceIDToUse,
+				SpanID:     customParentID, // This becomes the parent span ID for the new span
+				TraceFlags: trace.FlagsSampled,
+				Remote:     true, // Mark as remote to indicate this is a parent from another service
+			}
+
+			customSpanCtx := trace.NewSpanContext(spanCtxConfig)
+			if customSpanCtx.IsValid() {
+				ctx = trace.ContextWithSpanContext(ctx, customSpanCtx)
+			}
+
+			// Store the trace ID for later spans to inherit
+			if customTraceID.IsValid() {
+				f.traceID = customTraceID
+			}
+		}
+	} else if parentSpanCtx.IsValid() {
 		ctx = trace.ContextWithSpanContext(ctx, parentSpanCtx)
 	}
 
@@ -493,6 +596,11 @@ func (f *OTELFormatter) handleProcessExit(event *bpf.Event) error {
 			)
 		}
 		delete(f.envCaptureIssues, event.Pid)
+	}
+
+	// Add root span warnings if this is the root span
+	if event.Pid == f.rootSpanPID && len(f.rootSpanWarnings) > 0 {
+		spanInfo.Span.SetAttributes(f.rootSpanWarnings...)
 	}
 
 	// End span with explicit end time
@@ -579,6 +687,109 @@ func (f *OTELFormatter) evaluateCustomAttributes(pid uint32) ([]attribute.KeyVal
 	}
 
 	return attrs, nil
+}
+
+// evaluateAndValidateTraceID evaluates the trace-id expression and validates the result.
+// Returns the trace ID, any warnings to attach to the span, and an error.
+func (f *OTELFormatter) evaluateAndValidateTraceID(pid uint32) (trace.TraceID, []attribute.KeyValue, error) {
+	if f.traceIDExpr == nil {
+		return trace.TraceID{}, nil, fmt.Errorf("no trace-id expression configured")
+	}
+
+	metadata := f.processMetadata[pid]
+	if metadata == nil {
+		return trace.TraceID{}, nil, fmt.Errorf("no metadata available for PID %d", pid)
+	}
+
+	// Build evaluation environment
+	env := map[string]interface{}{
+		"env":     metadata.Environ,
+		"args":    metadata.Args,
+		"cmdline": metadata.CmdlineFull,
+	}
+
+	// Evaluate the expression
+	output, err := expr.Run(f.traceIDExpr, env)
+	if err != nil {
+		return trace.TraceID{}, nil, fmt.Errorf("failed to evaluate trace-id expression: %w", err)
+	}
+
+	// Convert output to string
+	resultStr := fmt.Sprint(output)
+	var warnings []attribute.KeyValue
+
+	// Try to parse as valid trace ID (32 hex chars)
+	if len(resultStr) == 32 {
+		if traceID, err := trace.TraceIDFromHex(resultStr); err == nil {
+			// Valid trace ID - use it directly
+			return traceID, warnings, nil
+		}
+	}
+
+	// Invalid trace ID - hash it with SHA-256 and use first 32 hex chars
+	hash := sha256.Sum256([]byte(resultStr))
+	hashedTraceIDStr := hex.EncodeToString(hash[:16]) // Use first 16 bytes = 32 hex chars
+
+	traceID, err := trace.TraceIDFromHex(hashedTraceIDStr)
+	if err != nil {
+		// This should never happen since we control the hash output
+		return trace.TraceID{}, nil, fmt.Errorf("failed to create trace ID from hash: %w", err)
+	}
+
+	// Add warnings about the conversion
+	warnings = append(warnings,
+		attribute.String("_trace_id_expr_result", resultStr),
+		attribute.String("_trace_id_invalid_warning", fmt.Sprintf("Expression result %q is not a valid 32-char hex trace ID, used SHA-256 hash instead", resultStr)),
+	)
+
+	return traceID, warnings, nil
+}
+
+// evaluateAndValidateParentID evaluates the parent-id expression and validates the result.
+// Returns the parent span ID, any warnings to attach to the span, and an error.
+func (f *OTELFormatter) evaluateAndValidateParentID(pid uint32) (trace.SpanID, []attribute.KeyValue, error) {
+	if f.parentIDExpr == nil {
+		// No parent-id expression - return zero span ID (no parent)
+		return trace.SpanID{}, nil, nil
+	}
+
+	metadata := f.processMetadata[pid]
+	if metadata == nil {
+		return trace.SpanID{}, nil, fmt.Errorf("no metadata available for PID %d", pid)
+	}
+
+	// Build evaluation environment
+	env := map[string]interface{}{
+		"env":     metadata.Environ,
+		"args":    metadata.Args,
+		"cmdline": metadata.CmdlineFull,
+	}
+
+	// Evaluate the expression
+	output, err := expr.Run(f.parentIDExpr, env)
+	if err != nil {
+		return trace.SpanID{}, nil, fmt.Errorf("failed to evaluate parent-id expression: %w", err)
+	}
+
+	// Convert output to string
+	resultStr := fmt.Sprint(output)
+	var warnings []attribute.KeyValue
+
+	// Try to parse as valid span ID (16 hex chars)
+	if len(resultStr) == 16 {
+		if spanID, err := trace.SpanIDFromHex(resultStr); err == nil {
+			// Valid span ID - use it directly
+			return spanID, warnings, nil
+		}
+	}
+
+	// Invalid span ID - use zero span ID (no parent)
+	warnings = append(warnings,
+		attribute.String("_parent_id_expr_result", resultStr),
+		attribute.String("_parent_id_invalid_warning", fmt.Sprintf("Expression result %q is not a valid 16-char hex span ID, using null parent ID instead", resultStr)),
+	)
+
+	return trace.SpanID{}, warnings, nil
 }
 
 func (f *OTELFormatter) handleTCPConnect(event *bpf.Event) error {

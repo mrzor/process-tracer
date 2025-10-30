@@ -48,18 +48,51 @@ func TestCmdlineSource(t *testing.T) {
 	}
 }
 
-func TestResolverWithStaticSources(t *testing.T) {
+func TestIngestEndpoints(t *testing.T) {
 	resolver := New()
-	resolver.AddStaticSource(&EnvironSource{})
-	resolver.AddStaticSource(&CmdlineSource{})
 
-	// Run on current process
-	err := resolver.HandleStaticSources(os.Getpid())
-	require.NoError(t, err)
+	// Simulate eBPF-sourced environment variables and command-line arguments
+	envVars := []string{
+		"DATABASE_URL=postgresql://user:pass@db.example.com:5432/mydb",
+		"REDIS_HOST=cache.internal.net",
+		"API_ENDPOINT=https://api.service.local:8080/v1",
+		"BACKEND_IP=10.0.0.5",
+	}
+	args := []string{
+		"/usr/bin/curl",
+		"http://example.com/api",
+		"--host", "192.168.1.100:3000",
+	}
 
-	// We should have extracted something (the environment likely has hostnames/IPs)
-	if len(resolver.IPToHosts) == 0 && len(resolver.HostToIPs) == 0 {
-		t.Log("Warning: No endpoints extracted (may be OK if env has no hostnames)")
+	// Ingest all data at once (as would happen from eBPF events)
+	envVars = append(envVars, args...)
+	resolver.IngestEndpoints(envVars...)
+
+	// Should have extracted hostnames and IPs
+	assert.NotEmpty(t, resolver.IPToHosts, "Expected to extract IPs from endpoints")
+
+	// Check that specific IPs were captured
+	hosts := resolver.Lookup("10.0.0.5")
+	assert.NotNil(t, hosts, "Expected to find IP 10.0.0.5")
+	assert.Contains(t, hosts, "10.0.0.5", "Expected IP to map to itself")
+
+	hosts = resolver.Lookup("192.168.1.100")
+	assert.NotNil(t, hosts, "Expected to find IP 192.168.1.100")
+	assert.Contains(t, hosts, "192.168.1.100", "Expected IP to map to itself")
+}
+
+func TestIngestEndpointsWithDNSResolution(t *testing.T) {
+	resolver := New()
+
+	// Test with localhost which should resolve to 127.0.0.1
+	resolver.IngestEndpoints("REDIS=localhost:6379")
+
+	// Check that localhost was resolved
+	hosts := resolver.Lookup("127.0.0.1")
+	if hosts != nil {
+		assert.Contains(t, hosts, "localhost", "Expected 127.0.0.1 to map to localhost")
+	} else {
+		t.Log("Note: DNS resolution for localhost failed (may be OK in test environment)")
 	}
 }
 
@@ -147,36 +180,4 @@ func TestStaticSourceInterface(t *testing.T) {
 	// Verify that our sources implement the interface correctly
 	var _ StaticSource = &EnvironSource{}
 	var _ StaticSource = &CmdlineSource{}
-}
-
-func TestHandleDynamicSource(t *testing.T) {
-	resolver := New()
-
-	// Create a mock dynamic source
-	mockSource := &mockDynamicSource{
-		responses: map[string][]string{
-			"file_read": {"http://example.com", "192.168.1.50"},
-		},
-	}
-
-	resolver.AddDynamicSource(mockSource)
-
-	// Process an event
-	resolver.HandleDynamicSource(1234, "file_read", []byte("some data"))
-
-	// Check that endpoints were extracted
-	hasData := len(resolver.IPToHosts) > 0 || len(resolver.HostToIPs) > 0
-	assert.True(t, hasData, "Expected dynamic source to populate resolver")
-}
-
-// mockDynamicSource is a test implementation of DynamicSource.
-type mockDynamicSource struct {
-	responses map[string][]string
-}
-
-func (m *mockDynamicSource) OnEvent(pid int, eventType string, data []byte) []string {
-	if endpoints, ok := m.responses[eventType]; ok {
-		return endpoints
-	}
-	return nil
 }

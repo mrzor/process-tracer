@@ -62,7 +62,6 @@ type OTELFormatter struct {
 	metadataErrors   map[uint32]error                     // PID -> metadata collection errors
 	customAttrs      []config.CustomAttribute             // custom attribute definitions
 	compiledExprs    []*vm.Program                        // pre-compiled expressions
-	metaCollector    *procmeta.Collector                  // process metadata collector
 	envChunks        map[uint32]*EnvChunkBuffer           // PID -> environment chunk buffer
 	envVarCollectors map[uint32]*EnvVarCollector          // PID -> streaming env var collector
 	envCaptureIssues map[uint32][]string                  // PID -> list of warnings/issues
@@ -112,7 +111,6 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 		metadataErrors:   make(map[uint32]error),
 		customAttrs:      customAttrs,
 		compiledExprs:    compiledExprs,
-		metaCollector:    procmeta.NewCollector(),
 		envChunks:        make(map[uint32]*EnvChunkBuffer),
 		envVarCollectors: make(map[uint32]*EnvVarCollector),
 		envCaptureIssues: make(map[uint32][]string),
@@ -195,16 +193,14 @@ func (f *OTELFormatter) HandleEnvChunk(chunk *bpf.EnvChunkEvent) error {
 		f.processMetadata[pid].Args = args
 		f.processMetadata[pid].CmdlineFull = strings.Join(args, " ")
 
-		// Feed environment to pseudo reverse DNS resolver
-		// This replaces the old HandleStaticSources call that read from /proc
+		// Feed environment and args to pseudo reverse DNS resolver
+		// Collect all values to ingest
+		endpoints := make([]string, 0, len(env)+len(args))
 		for _, value := range env {
-			f.resolver.HandleDynamicSource(int(pid), "ebpf_environ", []byte(value))
+			endpoints = append(endpoints, value)
 		}
-
-		// Also feed args to resolver
-		for _, arg := range args {
-			f.resolver.HandleDynamicSource(int(pid), "ebpf_argv", []byte(arg))
-		}
+		endpoints = append(endpoints, args...)
+		f.resolver.IngestEndpoints(endpoints...)
 
 		// Add warning if truncated
 		if buffer.truncated {
@@ -389,15 +385,14 @@ func (f *OTELFormatter) finalizeEnvVarCollection(pid uint32, collector *EnvVarCo
 	f.processMetadata[pid].Args = finalArgs
 	f.processMetadata[pid].CmdlineFull = strings.Join(finalArgs, " ")
 
-	// Feed environment to pseudo reverse DNS resolver
+	// Feed environment and args to pseudo reverse DNS resolver
+	// Collect all values to ingest
+	endpoints := make([]string, 0, len(env)+len(finalArgs))
 	for _, value := range env {
-		f.resolver.HandleDynamicSource(int(pid), "ebpf_environ", []byte(value))
+		endpoints = append(endpoints, value)
 	}
-
-	// Also feed args to resolver
-	for _, arg := range finalArgs {
-		f.resolver.HandleDynamicSource(int(pid), "ebpf_argv", []byte(arg))
-	}
+	endpoints = append(endpoints, finalArgs...)
+	f.resolver.IngestEndpoints(endpoints...)
 
 	// Add warnings if applicable
 	if collector.truncated {

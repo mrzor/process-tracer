@@ -50,22 +50,17 @@ type HostMapping struct {
 }
 
 // Resolver extracts network endpoints from multiple sources and builds reverse IP lookups.
-// Data ingestion happens via Handle* methods; resolution via Lookup().
+// Data ingestion happens via IngestEndpoints() method; resolution via Lookup().
 //
 // Usage:
 //
 //	r := New()
-//	r.AddStaticSource(&EnvironSource{})
-//	r.AddStaticSource(&CmdlineSource{})
-//	r.HandleStaticSources(pid)  // Ingests data from static sources
-//	r.HandleDynamicSource(pid, "file_read", data)  // Ingests runtime events
-//	hostnames := r.Lookup(ip)  // Resolves IP to hostnames (call as late as possible)
+//	r.IngestEndpoints(envVars...)  // Ingests environment variables from eBPF
+//	r.IngestEndpoints(args...)     // Ingests command-line arguments from eBPF
+//	hostnames := r.Lookup(ip)      // Resolves IP to hostnames (call as late as possible)
 type Resolver struct {
 	IPToHosts map[string]*HostMapping
 	HostToIPs map[string][]string
-
-	staticSources  []StaticSource
-	dynamicSources []DynamicSource
 
 	hostnameRegex   *regexp.Regexp
 	ipv4Regex       *regexp.Regexp
@@ -78,8 +73,6 @@ func New() *Resolver {
 	return &Resolver{
 		IPToHosts:       make(map[string]*HostMapping),
 		HostToIPs:       make(map[string][]string),
-		staticSources:   []StaticSource{},
-		dynamicSources:  []DynamicSource{},
 		hostnameRegex:   regexp.MustCompile(`(?i)(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}`),
 		ipv4Regex:       regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`),
 		ipv6Regex:       regexp.MustCompile(`(?i)(?:\[)?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:\])?`),
@@ -87,68 +80,15 @@ func New() *Resolver {
 	}
 }
 
-// AddStaticSource registers a static data source for extraction.
-func (r *Resolver) AddStaticSource(source StaticSource) {
-	r.staticSources = append(r.staticSources, source)
-}
-
-// AddDynamicSource registers a dynamic event source.
-func (r *Resolver) AddDynamicSource(source DynamicSource) {
-	r.dynamicSources = append(r.dynamicSources, source)
-}
-
-// HandleStaticSources runs all registered static sources for a given PID.
-// This ingests data from environ, cmdline, config files, etc.
-func (r *Resolver) HandleStaticSources(pid int) error {
-	for _, source := range r.staticSources {
-		endpoints, err := source.Extract(pid)
-		if err != nil {
-			// Continue with other sources even if one fails
-			continue
-		}
-		for _, endpoint := range endpoints {
-			r.extractEndpoints(endpoint)
-		}
-	}
-	return nil
-}
-
-// HandleDynamicSource processes a runtime event through all dynamic sources.
-// This ingests data from eBPF hooks (file reads, UDP packets, DNS responses, etc.)
-func (r *Resolver) HandleDynamicSource(pid int, eventType string, data []byte) {
-	for _, source := range r.dynamicSources {
-		endpoints := source.OnEvent(pid, eventType, data)
-		for _, endpoint := range endpoints {
-			r.extractEndpoints(endpoint)
-		}
+// IngestEndpoints directly ingests endpoint strings for extraction.
+// This is the primary method for feeding data from eBPF events, bypassing the source abstraction.
+// Each string is scanned for hostnames, IPs, and hostname:port combinations.
+func (r *Resolver) IngestEndpoints(endpoints ...string) {
+	for _, endpoint := range endpoints {
+		r.extractEndpoints(endpoint)
 	}
 }
 
-// ResolveFromPID reads process environment and extracts network endpoints.
-// Deprecated: Use HandleStaticSources with EnvironSource instead.
-func (r *Resolver) ResolveFromPID(pid int) error {
-	environPath := fmt.Sprintf("/proc/%d/environ", pid)
-	//nolint:gosec // Reading from /proc is safe and necessary for process metadata
-	data, err := os.ReadFile(environPath)
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", environPath, err)
-	}
-
-	envVars := bytes.Split(data, []byte{0})
-	for _, envVar := range envVars {
-		if len(envVar) == 0 {
-			continue
-		}
-		parts := bytes.SplitN(envVar, []byte("="), 2)
-		if len(parts) != 2 {
-			continue
-		}
-		value := string(parts[1])
-		r.extractEndpoints(value)
-	}
-
-	return nil
-}
 
 func (r *Resolver) extractEndpoints(s string) {
 	hostPortMatches := r.hostnamePortReg.FindAllString(s, -1)

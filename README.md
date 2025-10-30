@@ -20,6 +20,7 @@ bullet points and surprising absence of emojis.
 - TCP connection tracking (connect/close events)
 - Rudimentary hackish pseudo reverse-DNS system
 - Expr expressions can be used to add extra attributes to spans
+- Beware: process environment variable count is limited, and values are truncated after 2048 bytes
 
 ## Quick Start
 
@@ -74,13 +75,11 @@ convoluted build system and whatnot.
 
 - Applied software engineering to diminish the amount of vibe-coded nonsense is WELCOMED
   - PREFER: pure functions, immutability, command-query separation and state machines
-  - AVOID: ye-old design pattern for manually allocated memory languages
-  - AVOID: excessive DRY / exhaustive testing / YAGNI features
-  - AVOID: dogmatism and blind rule-following
+  - AVOID: mixing concerns, big packages
 
 ## Requirements
 
-- Linux kernel with BTF support
+- Linux 5.17+ kernel with BTF support
 - CAP_BPF or root privileges
 - Go 1.25+
 - clang/llvm

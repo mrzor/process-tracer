@@ -13,10 +13,12 @@ import (
 //
 //nolint:revive // ALL_CAPS naming matches C/kernel conventions
 const (
-	EVENT_EXEC        = 1
-	EVENT_EXIT        = 2
-	EVENT_TCP_CONNECT = 3
-	EVENT_TCP_CLOSE   = 4
+	EVENT_EXEC           = 1
+	EVENT_EXIT           = 2
+	EVENT_TCP_CONNECT    = 3
+	EVENT_TCP_CLOSE      = 4
+	EVENT_EXEC_ENV_CHUNK = 5
+	EVENT_ENV_VAR        = 6
 )
 
 // Event matches the C struct from process_tracer.h.
@@ -72,6 +74,48 @@ type TCPEventData struct {
 	Dport  uint16
 	Family uint16
 	_      uint16 // Padding
+}
+
+// EnvChunkEvent represents a chunk of argv and environment variables from execve.
+// This is a separate event type that doesn't fit in the fixed-size Event union.
+// Header fields match Event struct for consistent type detection at offset 24.
+type EnvChunkEvent struct {
+	Pid       uint32
+	Ppid      uint32  // Not used, but keeps layout consistent
+	Uid       uint32  //nolint:revive // Matches C struct field naming
+	Pad1      uint32  // Padding before timestamp (matches Event struct)
+	Timestamp uint64  // Not used, but keeps layout consistent
+	Type      uint8   // EVENT_EXEC_ENV_CHUNK
+	_         [7]byte // Padding (matches Event struct)
+	ChunkID   uint32
+	DataSize  uint32
+	Argc      uint32 // Number of argv strings at start of Data
+	IsFinal   uint8
+	Truncated uint8
+	_         [2]byte // Padding
+	Data      [15000]byte
+}
+
+// EnvVarEvent represents a single environment variable or argument from execve.
+// Used for streaming large numbers of variables (1024-2048+).
+// Header fields match Event struct for consistent type detection.
+type EnvVarEvent struct {
+	Pid       uint32
+	Ppid      uint32
+	Uid       uint32 //nolint:revive // Matches C struct field naming
+	Pad1      uint32 // Padding before timestamp
+	Timestamp uint64
+	Type      uint8   // EVENT_ENV_VAR
+	_         [7]byte // Padding (matches Event struct)
+	VarIndex  uint16  // Position in argv/envp array (0-2047)
+	TotalVars uint16  // Total count (0 = unknown yet)
+	IsArgv    uint8   // 0=env, 1=argv
+	IsFinal   uint8   // 1 if this is last variable
+	Truncated uint8   // 1 if variable was truncated
+	_         uint8   // Padding
+	DataSize  uint16  // Actual data length
+	_         uint16  // Padding to align to 8 bytes
+	Data      [512]byte
 }
 
 // ProcessTracerObjects provides access to the loaded BPF objects.

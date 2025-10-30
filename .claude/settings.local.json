@@ -28,7 +28,10 @@
       "Bash(golangci-lint linters:*)",
       "Bash(gofmt:*)",
       "Bash(mise install:*)",
-      "Bash(go generate:*)"
+      "Bash(go generate:*)",
+      "Bash(sed:*)",
+      "Bash(find:*)",
+      "Bash(dmesg:*)"
     ],
     "deny": [],
     "ask": []

@@ -62,14 +62,50 @@ func (s *Stream) processEvents(ctx context.Context) {
 				continue
 			}
 
-			var event bpf.Event
-			if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &event); err != nil {
-				log.Printf("parsing event: %v", err)
+			// First, peek at the event type to determine how to parse
+			// The Event struct has Type at offset 24 (after Pid, Ppid, Uid, Pad1, Timestamp)
+			if len(record.RawSample) < 25 {
+				log.Printf("record too short: %d bytes", len(record.RawSample))
 				continue
 			}
 
-			if err := s.handler.HandleEvent(&event); err != nil {
-				log.Printf("handling event: %v", err)
+			// Read just the type byte to determine event kind
+			eventType := record.RawSample[24]
+
+			switch eventType {
+			case bpf.EVENT_EXEC_ENV_CHUNK:
+				// This is an environment chunk event - parse differently
+				var envChunk bpf.EnvChunkEvent
+				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &envChunk); err != nil {
+					log.Printf("parsing env chunk event: %v", err)
+					continue
+				}
+
+				if err := s.handler.HandleEnvChunk(&envChunk); err != nil {
+					log.Printf("handling env chunk: %v", err)
+				}
+			case bpf.EVENT_ENV_VAR:
+				// This is a single environment variable event
+				var envVar bpf.EnvVarEvent
+				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &envVar); err != nil {
+					log.Printf("parsing env var event: %v", err)
+					continue
+				}
+
+				if err := s.handler.HandleEnvVar(&envVar); err != nil {
+					log.Printf("handling env var: %v", err)
+				}
+			default:
+				// Regular event
+				var event bpf.Event
+				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &event); err != nil {
+					log.Printf("parsing event: %v", err)
+					continue
+				}
+
+				if err := s.handler.HandleEvent(&event); err != nil {
+					log.Printf("handling event: %v", err)
+				}
 			}
 		}
 	}

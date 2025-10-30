@@ -24,8 +24,11 @@ bullet points and surprising absence of emojis.
 ## Quick Start
 
 ```bash
-# Build
-mise go-build
+# Build yourself
+git clone ... && mise go-build
+
+# Or just grab the latest build
+mise use ubi:mrzor/process-tracer@latest
 
 # Run
 sudo ./process-tracer -- command ...

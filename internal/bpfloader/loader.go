@@ -15,6 +15,7 @@ import (
 type Loader struct {
 	objs              bpf.ProcessTracerObjects
 	execLink          link.Link
+	execveEnterLink   link.Link
 	exitLink          link.Link
 	tcpCloseLink      link.Link
 	tcpV4ConnectEntry link.Link
@@ -59,6 +60,9 @@ func (l *Loader) closeErrorf(errstr string, e error) error {
 	if l.execLink != nil {
 		_ = l.execLink.Close()
 	}
+	if l.execveEnterLink != nil {
+		_ = l.execveEnterLink.Close()
+	}
 	return fmt.Errorf("%s: %w", errstr, e)
 }
 
@@ -70,6 +74,12 @@ func (l *Loader) Attach() error {
 	l.execLink, err = link.Tracepoint("sched", "sched_process_exec", l.objs.HandleExec, nil)
 	if err != nil {
 		return l.closeErrorf("attaching exec tracepoint", err)
+	}
+
+	// Attach to sys_enter_execve tracepoint for argv/envp capture
+	l.execveEnterLink, err = link.Tracepoint("syscalls", "sys_enter_execve", l.objs.TraceExecveEnter, nil)
+	if err != nil {
+		return l.closeErrorf("attaching sys_enter_execve tracepoint", err)
 	}
 
 	// Attach to sched_process_exit tracepoint
@@ -171,6 +181,12 @@ func (l *Loader) Close() error {
 	if l.execLink != nil {
 		if err := l.execLink.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("closing exec link: %w", err))
+		}
+	}
+
+	if l.execveEnterLink != nil {
+		if err := l.execveEnterLink.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("closing execve enter link: %w", err))
 		}
 	}
 

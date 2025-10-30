@@ -14,6 +14,8 @@ import (
 // EventHandler is the interface for handling BPF events.
 type EventHandler interface {
 	HandleEvent(event *bpf.Event) error
+	HandleEnvChunk(chunk *bpf.EnvChunkEvent) error
+	HandleEnvVar(envVar *bpf.EnvVarEvent) error
 }
 
 // getSystemBootTime reads the system boot time from /proc/stat.

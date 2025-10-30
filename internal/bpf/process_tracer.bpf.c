@@ -18,9 +18,12 @@ char LICENSE[] SEC("license") = "GPL";
 /* Network byte order conversion */
 #define bpf_ntohs(x) __builtin_bswap16(x)
 
+/* Maximum size for a single environment variable or argument */
+#define MAX_ENV_VALUE_SIZE 2048
+
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024);
+    __uint(max_entries, 2 * 1024 * 1024);  /* 2MB for streaming env vars */
 } rb SEC(".maps");
 
 /* Map to track PIDs in our process tree */
@@ -47,17 +50,353 @@ struct {
     __type(value, struct sock *);
 } inflight_connects SEC(".maps");
 
+/* Map to track in-flight execve calls
+ * We send env/argv data immediately in sys_enter_execve
+ * This map just tracks which PIDs have entered execve for cleanup
+ */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, u64);  // pid_tgid
+    __type(value, u8);  // just a marker
+} inflight_execve SEC(".maps");
+
+/* Per-CPU buffer for environment variable temporary storage */
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, char[MAX_ENV_VALUE_SIZE]);
+} env_var_buffer SEC(".maps");
+
+/* State tracking for streaming env vars with tail calls */
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);  /* Track up to 1024 concurrent execve */
+    __type(key, u32);            /* PID */
+    __type(value, struct env_stream_state);
+} env_stream_state_map SEC(".maps");
+
+/* Program array for tail calls */
+struct {
+    __uint(type, BPF_MAP_TYPE_PROG_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, u32);
+    __type(value, u32);
+} prog_array SEC(".maps");
+
+/* Context for bpf_loop() callbacks */
+struct loop_ctx {
+    char **arr_ptr;         /* argv or envp pointer */
+    struct env_chunk_event *chunk;
+    char *var_buf;
+    u32 *offset_ptr;
+    u32 *count_ptr;         /* argc or NULL for envp */
+    u32 max_var_size;
+    u32 done;               /* Set to 1 to stop iteration */
+};
+
+/* Callback for bpf_loop() to read one argv/envp entry */
+static long read_var_callback(u32 index, void *ctx)
+{
+    struct loop_ctx *lctx = (struct loop_ctx *)ctx;
+    char *var_ptr = NULL;
+    int var_len;
+    u32 offset = *lctx->offset_ptr;
+    u32 max_size = lctx->max_var_size;
+
+    /* Check if we should stop (previous iteration hit NULL or limit) */
+    if (lctx->done)
+        return 1; /* Stop iteration */
+
+    /* Verify max_size is bounded for verifier (must match env_var_buffer size) */
+    if (max_size > MAX_ENV_VALUE_SIZE)
+        max_size = MAX_ENV_VALUE_SIZE;
+
+    /* Read pointer to variable */
+    if (bpf_probe_read_user(&var_ptr, sizeof(var_ptr), &lctx->arr_ptr[index]))
+        return 1; /* Stop on error */
+
+    if (!var_ptr) {
+        lctx->done = 1; /* NULL = end of array */
+        return 1;
+    }
+
+    /* Read the variable string with bounded size */
+    var_len = bpf_probe_read_user_str(lctx->var_buf, max_size, var_ptr);
+    if (var_len <= 0)
+        return 0; /* Continue to next */
+
+    /* Bounds check for var_len */
+    if (var_len > max_size)
+        var_len = max_size;
+    
+    /* Explicit bounds check for offset - ensure we have room for max_size bytes */
+    if (offset >= MAX_ENV_CHUNK_SIZE - MAX_ENV_VALUE_SIZE) {
+        lctx->done = 1;
+        return 1; /* Stop - not enough room for even one more var */
+    }
+    
+    /* Final safety check: ensure var_len is absolutely bounded */
+    if (var_len > MAX_ENV_VALUE_SIZE)
+        var_len = MAX_ENV_VALUE_SIZE;
+    
+    /* Ensure we don't exceed buffer - clamp var_len if needed */
+    if (offset + var_len > MAX_ENV_CHUNK_SIZE) {
+        var_len = MAX_ENV_CHUNK_SIZE - offset;
+    }
+    
+    /* Bounds check again after clamping */
+    if (var_len > MAX_ENV_VALUE_SIZE)
+        var_len = MAX_ENV_VALUE_SIZE;
+    if (var_len <= 0) {
+        lctx->done = 1;
+        return 1;
+    }
+    
+    /* Copy to chunk - verifier knows: offset < MAX_ENV_CHUNK_SIZE-MAX_ENV_VALUE_SIZE and var_len <= MAX_ENV_VALUE_SIZE */
+    /* Therefore: offset + var_len < MAX_ENV_CHUNK_SIZE */
+    if (var_len > 0 && var_len <= MAX_ENV_VALUE_SIZE) {
+        bpf_probe_read_kernel(&lctx->chunk->data[offset], var_len, lctx->var_buf);
+    }
+
+    offset += var_len;
+    *lctx->offset_ptr = offset;
+    
+    /* Increment argc if this is argv */
+    if (lctx->count_ptr)
+        (*lctx->count_ptr)++;
+
+    return 0; /* Continue to next iteration */
+}
+
+/* Send environment/argv in single chunk using bpf_loop() for efficiency
+ * This uses bpf_loop() (Linux 5.17+) which only verifies the callback once,
+ * allowing us to support many more variables without instruction explosion.
+ */
+static __always_inline void send_env_multi_chunk(u32 pid, u64 argv_addr, u64 envp_addr)
+{
+    struct env_chunk_event *chunk;
+    char **argv = (char **)argv_addr;
+    char **envp = (char **)envp_addr;
+    u32 offset = 0;
+    u32 zero = 0;
+    char *var_buf;
+    struct loop_ctx ctx = {0};
+
+    #define MAX_SIMPLE_ARGS 128
+    #define MAX_SIMPLE_ENV 512   /* Try 256 env vars with bpf_loop() */
+    #define MAX_VAR_SIZE MAX_ENV_VALUE_SIZE
+
+    var_buf = bpf_map_lookup_elem(&env_var_buffer, &zero);
+    if (!var_buf)
+        return;
+
+    chunk = bpf_ringbuf_reserve(&rb, sizeof(*chunk), 0);
+    if (!chunk)
+        return;
+
+    chunk->pid = pid;
+    chunk->ppid = 0;
+    chunk->uid = 0;
+    chunk->_pad1 = 0;
+    chunk->timestamp = 0;
+    chunk->type = EVENT_EXEC_ENV_CHUNK;
+    chunk->chunk_id = 0;
+    chunk->is_final = 1;
+    chunk->truncated = 1;
+    chunk->argc = 0;
+
+    /* Read command-line arguments using bpf_loop() */
+    ctx.arr_ptr = argv;
+    ctx.chunk = chunk;
+    ctx.var_buf = var_buf;
+    ctx.offset_ptr = &offset;
+    ctx.count_ptr = &chunk->argc;
+    ctx.max_var_size = MAX_VAR_SIZE;
+    ctx.done = 0;
+    
+    bpf_loop(MAX_SIMPLE_ARGS, read_var_callback, &ctx, 0);
+
+    /* Read environment variables using bpf_loop() */
+    ctx.arr_ptr = envp;
+    ctx.count_ptr = NULL; /* Don't count env vars in argc */
+    ctx.done = 0;
+    
+    bpf_loop(MAX_SIMPLE_ENV, read_var_callback, &ctx, 0);
+
+    chunk->data_size = offset;
+    bpf_ringbuf_submit(chunk, 0);
+
+    #undef MAX_SIMPLE_ARGS
+    #undef MAX_SIMPLE_ENV
+    #undef MAX_VAR_SIZE
+}
+
+/* Simplified helper to send argv and env vars in a single chunk
+ * This is much simpler for the verifier to validate
+ * Format: argv vars followed by env vars, all as null-terminated strings
+ * NOTE: This is the OLD implementation, kept for reference/fallback
+ */
+static __always_inline void send_process_args_and_env(u32 pid, u64 argv_addr, u64 envp_addr)
+{
+    struct env_chunk_event *chunk;
+    char **argv = (char **)argv_addr;
+    char **envp = (char **)envp_addr;
+    u32 offset = 0;
+    u32 zero = 0;
+    char *var_buf;
+
+    #define MAX_SIMPLE_ARGS 8   /* Capture first 8 command-line args */
+    #define MAX_SIMPLE_ENV 4    /* Capture first 4 env vars */
+    #define MAX_VAR_SIZE 256
+
+    /* Get per-CPU buffer once */
+    var_buf = bpf_map_lookup_elem(&env_var_buffer, &zero);
+    if (!var_buf)
+        return;
+
+    /* Reserve single chunk */
+    chunk = bpf_ringbuf_reserve(&rb, sizeof(*chunk), 0);
+    if (!chunk)
+        return;
+
+    chunk->pid = pid;
+    chunk->ppid = 0;      /* Not used */
+    chunk->uid = 0;       /* Not used */
+    chunk->_pad1 = 0;     /* Padding */
+    chunk->timestamp = 0; /* Not used */
+    chunk->type = EVENT_EXEC_ENV_CHUNK;
+    chunk->chunk_id = 0;
+    chunk->is_final = 1;  /* Single chunk only */
+    chunk->truncated = 1;  /* Mark as truncated since we only get first few */
+    chunk->argc = 0;      /* Will count as we read argv */
+
+    /* First, read command-line arguments */
+    #pragma unroll
+    for (int i = 0; i < MAX_SIMPLE_ARGS; i++) {
+        char *arg_ptr = NULL;
+        int arg_len;
+
+        /* Read pointer to arg */
+        if (bpf_probe_read_user(&arg_ptr, sizeof(arg_ptr), &argv[i]))
+            break;  /* Failed to read pointer */
+
+        if (!arg_ptr)
+            break;  /* NULL = end of argv */
+
+        /* Read the argument string */
+        arg_len = bpf_probe_read_user_str(var_buf, MAX_VAR_SIZE, arg_ptr);
+        if (arg_len <= 0)
+            continue;  /* Skip failed reads */
+
+        /* Bounds check */
+        if (arg_len > MAX_VAR_SIZE)
+            arg_len = MAX_VAR_SIZE;
+        if (offset + arg_len > MAX_ENV_CHUNK_SIZE)
+            break;  /* No more room */
+
+        /* Simple copy with explicit bounds for verifier safety */
+        for (int j = 0; j < MAX_VAR_SIZE; j++) {
+            if (j >= arg_len)
+                break;
+            if (offset + j >= MAX_ENV_CHUNK_SIZE)
+                break;
+            chunk->data[offset + j] = var_buf[j];
+        }
+
+        offset += arg_len;
+        chunk->argc++;  /* Count this arg */
+    }
+
+    /* Then, read environment variables */
+    #pragma unroll
+    for (int i = 0; i < MAX_SIMPLE_ENV; i++) {
+        char *env_var_ptr = NULL;
+        int var_len;
+
+        /* Read pointer to env variable */
+        if (bpf_probe_read_user(&env_var_ptr, sizeof(env_var_ptr), &envp[i]))
+            break;  /* Failed to read pointer */
+
+        if (!env_var_ptr)
+            break;  /* NULL = end of array */
+
+        /* Read the environment variable string */
+        var_len = bpf_probe_read_user_str(var_buf, MAX_VAR_SIZE, env_var_ptr);
+        if (var_len <= 0)
+            continue;  /* Skip failed reads */
+
+        /* Bounds check */
+        if (var_len > MAX_VAR_SIZE)
+            var_len = MAX_VAR_SIZE;
+        if (offset + var_len > MAX_ENV_CHUNK_SIZE)
+            break;  /* No more room */
+
+        /* Simple copy with explicit bounds for verifier safety */
+        for (int j = 0; j < MAX_VAR_SIZE; j++) {
+            if (j >= var_len)
+                break;
+            if (offset + j >= MAX_ENV_CHUNK_SIZE)
+                break;
+            chunk->data[offset + j] = var_buf[j];
+        }
+
+        offset += var_len;
+    }
+
+    chunk->data_size = offset;
+    bpf_ringbuf_submit(chunk, 0);
+
+    #undef MAX_SIMPLE_ARGS
+    #undef MAX_SIMPLE_ENV
+    #undef MAX_VAR_SIZE
+}
+
+SEC("tp/syscalls/sys_enter_execve")
+int trace_execve_enter(struct trace_event_raw_sys_enter *ctx)
+{
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid >> 32;
+    u64 argv_addr, envp_addr;
+    u8 val = 1;
+
+    /* Capture argv and envp pointers from syscall arguments
+     * args[0] = filename
+     * args[1] = argv
+     * args[2] = envp
+     */
+    argv_addr = ctx->args[1];
+    envp_addr = ctx->args[2];
+
+    /* Read argv and envp NOW, while the old address space is still valid
+     * This must happen BEFORE exec completes and switches address spaces
+     *
+     * NEW APPROACH: Send multiple chunks (8 chunks × 32 vars = 256 env vars)
+     * This is within verifier limits and handles most cloud-native workloads
+     */
+    if (argv_addr && envp_addr) {
+        send_env_multi_chunk(pid, argv_addr, envp_addr);
+    }
+
+    /* Mark that we've seen this execve (to match with sched_process_exec later) */
+    bpf_map_update_elem(&inflight_execve, &pid_tgid, &val, BPF_ANY);
+
+    return 0;
+}
+
 SEC("tp/sched/sched_process_exec")
 int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 {
     struct task_struct *task;
     struct event *e;
     pid_t pid, ppid;
-    u64 uid_gid;
+    u64 pid_tgid, uid_gid;
     u8 val = 1;
 
     uid_gid = bpf_get_current_uid_gid();
-    pid = bpf_get_current_pid_tgid() >> 32;
+    pid_tgid = bpf_get_current_pid_tgid();
+    pid = pid_tgid >> 32;
 
     task = (struct task_struct *)bpf_get_current_task();
     ppid = BPF_CORE_READ(task, real_parent, tgid);
@@ -83,6 +422,13 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     e->data.proc.exit_code = 0;
 
     bpf_ringbuf_submit(e, 0);
+
+    /* Clean up the inflight_execve marker if it exists
+     * Note: argv/env data was already sent in sys_enter_execve
+     * before the address space switch
+     */
+    bpf_map_delete_elem(&inflight_execve, &pid_tgid);
+
     return 0;
 }
 

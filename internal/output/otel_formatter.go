@@ -28,20 +28,44 @@ type OTELSpanInfo struct {
 	StartTime uint64 // monotonic timestamp in nanoseconds
 }
 
+// EnvChunkBuffer holds incomplete environment chunk sequences.
+type EnvChunkBuffer struct {
+	chunks        map[uint32][]byte // chunk_id -> data
+	receivedFinal bool
+	truncated     bool
+	lastUpdate    time.Time
+}
+
+// EnvVarCollector holds streaming environment variables from execve events.
+type EnvVarCollector struct {
+	args         []string        // Collected argv
+	env          []string        // Collected env vars (raw KEY=VALUE format)
+	argIndices   map[uint16]bool // Track which arg indices we've seen
+	envIndices   map[uint16]bool // Track which env indices we've seen
+	lastArgIndex uint16          // Highest arg index seen
+	lastEnvIndex uint16          // Highest env index seen
+	complete     bool            // Received is_final marker
+	truncated    bool            // Any var was truncated
+	lastUpdate   time.Time       // Last event received
+}
+
 // OTELFormatter formats events as OpenTelemetry spans.
 type OTELFormatter struct {
-	tracer          trace.Tracer
-	spans           map[uint32]*OTELSpanInfo // PID -> span info
-	tcpSpans        map[uint64]trace.Span    // socket addr -> TCP span
-	tcpStartTs      map[uint64]uint64        // socket addr -> start timestamp
-	traceID         trace.TraceID
-	resolver        *pseudo_reverse_dns.Resolver
-	bootTime        time.Time
-	processMetadata map[uint32]*procmeta.ProcessMetadata // PID -> process metadata
-	metadataErrors  map[uint32]error                     // PID -> metadata collection errors
-	customAttrs     []config.CustomAttribute             // custom attribute definitions
-	compiledExprs   []*vm.Program                        // pre-compiled expressions
-	metaCollector   *procmeta.Collector                  // process metadata collector
+	tracer           trace.Tracer
+	spans            map[uint32]*OTELSpanInfo // PID -> span info
+	tcpSpans         map[uint64]trace.Span    // socket addr -> TCP span
+	tcpStartTs       map[uint64]uint64        // socket addr -> start timestamp
+	traceID          trace.TraceID
+	resolver         *pseudo_reverse_dns.Resolver
+	bootTime         time.Time
+	processMetadata  map[uint32]*procmeta.ProcessMetadata // PID -> process metadata
+	metadataErrors   map[uint32]error                     // PID -> metadata collection errors
+	customAttrs      []config.CustomAttribute             // custom attribute definitions
+	compiledExprs    []*vm.Program                        // pre-compiled expressions
+	metaCollector    *procmeta.Collector                  // process metadata collector
+	envChunks        map[uint32]*EnvChunkBuffer           // PID -> environment chunk buffer
+	envVarCollectors map[uint32]*EnvVarCollector          // PID -> streaming env var collector
+	envCaptureIssues map[uint32][]string                  // PID -> list of warnings/issues
 }
 
 // NewOTELFormatter creates a new OTELFormatter.
@@ -77,18 +101,21 @@ func NewOTELFormatter(tracer trace.Tracer, traceIDHex string, resolver *pseudo_r
 	}
 
 	return &OTELFormatter{
-		tracer:          tracer,
-		spans:           make(map[uint32]*OTELSpanInfo),
-		tcpSpans:        make(map[uint64]trace.Span),
-		tcpStartTs:      make(map[uint64]uint64),
-		traceID:         traceID,
-		resolver:        resolver,
-		bootTime:        bootTime,
-		processMetadata: make(map[uint32]*procmeta.ProcessMetadata),
-		metadataErrors:  make(map[uint32]error),
-		customAttrs:     customAttrs,
-		compiledExprs:   compiledExprs,
-		metaCollector:   procmeta.NewCollector(),
+		tracer:           tracer,
+		spans:            make(map[uint32]*OTELSpanInfo),
+		tcpSpans:         make(map[uint64]trace.Span),
+		tcpStartTs:       make(map[uint64]uint64),
+		traceID:          traceID,
+		resolver:         resolver,
+		bootTime:         bootTime,
+		processMetadata:  make(map[uint32]*procmeta.ProcessMetadata),
+		metadataErrors:   make(map[uint32]error),
+		customAttrs:      customAttrs,
+		compiledExprs:    compiledExprs,
+		metaCollector:    procmeta.NewCollector(),
+		envChunks:        make(map[uint32]*EnvChunkBuffer),
+		envVarCollectors: make(map[uint32]*EnvVarCollector),
+		envCaptureIssues: make(map[uint32][]string),
 	}, nil
 }
 
@@ -112,6 +139,276 @@ func (f *OTELFormatter) HandleEvent(event *bpf.Event) error {
 	default:
 		return fmt.Errorf("unknown event type: %d", event.Type)
 	}
+}
+
+// HandleEnvChunk processes environment variable chunks from execve events.
+func (f *OTELFormatter) HandleEnvChunk(chunk *bpf.EnvChunkEvent) error {
+	pid := chunk.Pid
+
+	fmt.Printf("[DEBUG] HandleEnvChunk: PID=%d ChunkID=%d DataSize=%d IsFinal=%d Truncated=%d Argc=%d\n",
+		pid, chunk.ChunkID, chunk.DataSize, chunk.IsFinal, chunk.Truncated, chunk.Argc)
+
+	// Initialize chunk buffer if needed
+	if f.envChunks[pid] == nil {
+		f.envChunks[pid] = &EnvChunkBuffer{
+			chunks:     make(map[uint32][]byte),
+			lastUpdate: time.Now(),
+		}
+		fmt.Printf("[DEBUG] Created new chunk buffer for PID %d\n", pid)
+	}
+
+	buffer := f.envChunks[pid]
+	buffer.lastUpdate = time.Now()
+
+	// Store this chunk's data
+	if chunk.DataSize > 0 {
+		buffer.chunks[chunk.ChunkID] = make([]byte, chunk.DataSize)
+		copy(buffer.chunks[chunk.ChunkID], chunk.Data[:chunk.DataSize])
+		fmt.Printf("[DEBUG] Stored chunk %d with %d bytes for PID %d\n", chunk.ChunkID, chunk.DataSize, pid)
+	} else {
+		fmt.Printf("[DEBUG] WARNING: Chunk %d for PID %d has DataSize=0\n", chunk.ChunkID, pid)
+	}
+
+	// Check if this is the final chunk
+	if chunk.IsFinal != 0 {
+		buffer.receivedFinal = true
+		if chunk.Truncated != 0 {
+			buffer.truncated = true
+		}
+	}
+
+	// If we've received the final chunk, reassemble argv and environment
+	if buffer.receivedFinal {
+		fmt.Printf("[DEBUG] PID %d: Reassembling from %d chunks\n", pid, len(buffer.chunks))
+		args, env := f.reassembleArgsAndEnvironment(pid, buffer)
+		fmt.Printf("[DEBUG] PID %d: Reassembled %d args, %d env vars\n", pid, len(args), len(env))
+
+		// Create ProcessMetadata if needed
+		if f.processMetadata[pid] == nil {
+			f.processMetadata[pid] = &procmeta.ProcessMetadata{
+				Environ: make(map[string]string),
+			}
+		}
+
+		// Store the captured environment and args
+		f.processMetadata[pid].Environ = env
+		f.processMetadata[pid].Args = args
+		f.processMetadata[pid].CmdlineFull = strings.Join(args, " ")
+
+		// Feed environment to pseudo reverse DNS resolver
+		// This replaces the old HandleStaticSources call that read from /proc
+		for _, value := range env {
+			f.resolver.HandleDynamicSource(int(pid), "ebpf_environ", []byte(value))
+		}
+
+		// Also feed args to resolver
+		for _, arg := range args {
+			f.resolver.HandleDynamicSource(int(pid), "ebpf_argv", []byte(arg))
+		}
+
+		// Add warning if truncated
+		if buffer.truncated {
+			f.addEnvIssue(pid, fmt.Sprintf("data truncated: captured %d args, %d env vars", len(args), len(env)))
+		}
+
+		// Clean up chunk buffer
+		delete(f.envChunks, pid)
+	}
+
+	return nil
+}
+
+// reassembleArgsAndEnvironment reconstructs argv and environment from chunks.
+func (f *OTELFormatter) reassembleArgsAndEnvironment(pid uint32, buffer *EnvChunkBuffer) ([]string, map[string]string) {
+	// Reconstruct the full data in chunk order
+	var fullData []byte
+	numChunks := len(buffer.chunks)
+	//nolint:gosec // numChunks is bounded by map size, conversion is safe
+	for i := uint32(0); i < uint32(numChunks); i++ {
+		if chunkData, exists := buffer.chunks[i]; exists {
+			fullData = append(fullData, chunkData...)
+		} else {
+			// Missing chunk - add issue
+			f.addEnvIssue(pid, fmt.Sprintf("data incomplete: missing chunk %d", i))
+			break
+		}
+	}
+
+	// Parse null-terminated strings
+	// Args come first (no '='), then env vars (KEY=VALUE)
+	var args []string
+	env := make(map[string]string)
+	offset := 0
+
+	for offset < len(fullData) {
+		// Find the null terminator
+		end := offset
+		for end < len(fullData) && fullData[end] != 0 {
+			end++
+		}
+
+		if end == offset {
+			// Empty string or end of data
+			break
+		}
+
+		str := string(fullData[offset:end])
+
+		// Check if this is an environment variable (contains '=')
+		if idx := strings.IndexByte(str, '='); idx > 0 {
+			// This is an env var
+			key := str[:idx]
+			value := str[idx+1:]
+			env[key] = value
+		} else {
+			// This is a command-line argument (no '=')
+			args = append(args, str)
+		}
+
+		offset = end + 1 // Skip the null terminator
+	}
+
+	return args, env
+}
+
+// addEnvIssue adds an environment capture issue for a PID.
+func (f *OTELFormatter) addEnvIssue(pid uint32, issue string) {
+	f.envCaptureIssues[pid] = append(f.envCaptureIssues[pid], issue)
+}
+
+// HandleEnvVar processes individual environment variable events from streaming execve.
+func (f *OTELFormatter) HandleEnvVar(envVar *bpf.EnvVarEvent) error {
+	pid := envVar.Pid
+
+	// Initialize collector if needed
+	if f.envVarCollectors[pid] == nil {
+		f.envVarCollectors[pid] = &EnvVarCollector{
+			args:       make([]string, 0, 64),  // Pre-allocate reasonable size
+			env:        make([]string, 0, 256), // Pre-allocate for up to 256 env vars
+			argIndices: make(map[uint16]bool),
+			envIndices: make(map[uint16]bool),
+			lastUpdate: time.Now(),
+		}
+	}
+
+	collector := f.envVarCollectors[pid]
+	collector.lastUpdate = time.Now()
+
+	// Extract the variable data
+	varData := string(envVar.Data[:envVar.DataSize])
+
+	// Store the variable in the appropriate array
+	if envVar.IsArgv != 0 {
+		// This is an argument
+		// Ensure args slice is large enough
+		if int(envVar.VarIndex) >= len(collector.args) {
+			// Grow slice to accommodate this index
+			newArgs := make([]string, envVar.VarIndex+1)
+			copy(newArgs, collector.args)
+			collector.args = newArgs
+		}
+		collector.args[envVar.VarIndex] = varData
+		collector.argIndices[envVar.VarIndex] = true
+		if envVar.VarIndex > collector.lastArgIndex {
+			collector.lastArgIndex = envVar.VarIndex
+		}
+	} else {
+		// This is an environment variable
+		// Ensure env slice is large enough
+		if int(envVar.VarIndex) >= len(collector.env) {
+			// Grow slice to accommodate this index
+			newEnv := make([]string, envVar.VarIndex+1)
+			copy(newEnv, collector.env)
+			collector.env = newEnv
+		}
+		collector.env[envVar.VarIndex] = varData
+		collector.envIndices[envVar.VarIndex] = true
+		if envVar.VarIndex > collector.lastEnvIndex {
+			collector.lastEnvIndex = envVar.VarIndex
+		}
+	}
+
+	// Track truncation
+	if envVar.Truncated != 0 {
+		collector.truncated = true
+	}
+
+	// Check if this is the final variable
+	if envVar.IsFinal != 0 {
+		collector.complete = true
+	}
+
+	// If complete, process the collected variables
+	if collector.complete {
+		f.finalizeEnvVarCollection(pid, collector)
+	}
+
+	return nil
+}
+
+// finalizeEnvVarCollection processes completed environment variable streams.
+func (f *OTELFormatter) finalizeEnvVarCollection(pid uint32, collector *EnvVarCollector) {
+	// Trim args to actual size (remove empty slots at end)
+	args := collector.args[:collector.lastArgIndex+1]
+
+	// Filter out empty args (gaps in indices)
+	finalArgs := make([]string, 0, len(args))
+	for i, arg := range args {
+		//nolint:gosec // Bounds check ensures i fits in uint16
+		if i < 65536 && collector.argIndices[uint16(i)] {
+			finalArgs = append(finalArgs, arg)
+		}
+	}
+
+	// Trim env to actual size
+	envRaw := collector.env[:collector.lastEnvIndex+1]
+
+	// Parse environment variables and filter out gaps
+	env := make(map[string]string)
+	for i, envStr := range envRaw {
+		//nolint:gosec // Bounds check ensures i fits in uint16
+		if i >= 65536 || !collector.envIndices[uint16(i)] {
+			continue // Skip gaps or out of bounds
+		}
+		if idx := strings.IndexByte(envStr, '='); idx > 0 {
+			key := envStr[:idx]
+			value := envStr[idx+1:]
+			env[key] = value
+		}
+	}
+
+	// Create ProcessMetadata if needed
+	if f.processMetadata[pid] == nil {
+		f.processMetadata[pid] = &procmeta.ProcessMetadata{
+			Environ: make(map[string]string),
+		}
+	}
+
+	// Store the captured environment and args
+	f.processMetadata[pid].Environ = env
+	f.processMetadata[pid].Args = finalArgs
+	f.processMetadata[pid].CmdlineFull = strings.Join(finalArgs, " ")
+
+	// Feed environment to pseudo reverse DNS resolver
+	for _, value := range env {
+		f.resolver.HandleDynamicSource(int(pid), "ebpf_environ", []byte(value))
+	}
+
+	// Also feed args to resolver
+	for _, arg := range finalArgs {
+		f.resolver.HandleDynamicSource(int(pid), "ebpf_argv", []byte(arg))
+	}
+
+	// Add warnings if applicable
+	if collector.truncated {
+		f.addEnvIssue(pid, fmt.Sprintf("some variables truncated: captured %d args, %d env vars", len(finalArgs), len(env)))
+	}
+
+	// Log completion for debugging
+	// fmt.Printf("PID %d: collected %d args, %d env vars\n", pid, len(finalArgs), len(env))
+
+	// Clean up collector
+	delete(f.envVarCollectors, pid)
 }
 
 func (f *OTELFormatter) handleProcessExec(event *bpf.Event) error {
@@ -141,22 +438,6 @@ func (f *OTELFormatter) handleProcessExec(event *bpf.Event) error {
 		Span:      span,
 		SpanCtx:   span.SpanContext(),
 		StartTime: event.Timestamp,
-	}
-
-	// Ingest static sources for this PID (environ, cmdline)
-	_ = f.resolver.HandleStaticSources(int(event.Pid))
-
-	// Collect process metadata for custom attributes
-	if len(f.customAttrs) > 0 {
-		metadata, err := f.metaCollector.Collect(int(event.Pid))
-		if err != nil {
-			// Store error to add as span attribute later
-			f.metadataErrors[event.Pid] = err
-		}
-		// Store metadata even if partial (some custom attributes may still work)
-		if metadata != nil {
-			f.processMetadata[event.Pid] = metadata
-		}
 	}
 
 	return nil
@@ -207,6 +488,16 @@ func (f *OTELFormatter) handleProcessExit(event *bpf.Event) error {
 			attribute.String("_tracing_error_0", metaErr.Error()),
 		)
 		delete(f.metadataErrors, event.Pid)
+	}
+
+	// Add environment capture issues as span attributes if any
+	if envIssues, hasIssues := f.envCaptureIssues[event.Pid]; hasIssues {
+		for i, issue := range envIssues {
+			spanInfo.Span.SetAttributes(
+				attribute.String(fmt.Sprintf("_tracing_warning_%d", i), issue),
+			)
+		}
+		delete(f.envCaptureIssues, event.Pid)
 	}
 
 	// End span with explicit end time

@@ -6,15 +6,10 @@
 // applications store their important endpoints in environment variables (DATABASE_URL, REDIS_HOST,
 // API_ENDPOINT, etc.) and command-line arguments (curl http://example.com, --url, --host flags).
 //
-// The solution: scan multiple data sources for anything that looks like a hostname, IP address, or
-// hostname:port combination. Resolve hostnames to IPs. Build a reverse lookup map. When you
-// capture a connection to an IP, cross-reference it against this map to recover the original
-// endpoint name.
-//
-// Architecture:
-//   - StaticSource: one-time extraction at process discovery (environ, cmdline, config files)
-//   - DynamicSource: runtime event streams (eBPF file reads, UDP packets, DNS responses)
-//   - Resolver: ingests data from sources via Handle* methods, provides Lookup() for resolution
+// The solution: scan strings for hostnames, IP addresses, and hostname:port combinations.
+// Resolve hostnames to IPs once (caching to avoid re-resolution). Build a reverse lookup map.
+// When you capture a connection to an IP, cross-reference it against this map to recover the
+// original endpoint name.
 //
 // This is imperfect (misses some dynamic discovery, third-party connections) but extremely
 // practical: it catches 70-80% of meaningful connections with minimal overhead.
@@ -30,22 +25,8 @@ import (
 	"strings"
 )
 
-// StaticSource extracts network endpoints from one-time data sources (e.g., environ, cmdline).
-// These are typically read once when a process is first discovered.
-type StaticSource interface {
-	Extract(pid int) ([]string, error)
-}
-
-// DynamicSource processes runtime events to extract network endpoints (e.g., eBPF hooks).
-// eventType identifies the kind of event (e.g., "file_read", "udp_recv", "dns_response").
-// data contains the raw event payload.
-type DynamicSource interface {
-	OnEvent(pid int, eventType string, data []byte) []string
-}
-
-// HostMapping stores resolved IP addresses and their original endpoint names.
+// HostMapping stores the original endpoint names that resolved to an IP.
 type HostMapping struct {
-	IPs       []string
 	Originals []string
 }
 
@@ -59,8 +40,8 @@ type HostMapping struct {
 //	r.IngestEndpoints(args...)     // Ingests command-line arguments from eBPF
 //	hostnames := r.Lookup(ip)      // Resolves IP to hostnames (call as late as possible)
 type Resolver struct {
-	IPToHosts map[string]*HostMapping
-	HostToIPs map[string][]string
+	IPToHosts      map[string]*HostMapping
+	processedHosts map[string]bool
 
 	hostnameRegex   *regexp.Regexp
 	ipv4Regex       *regexp.Regexp
@@ -72,7 +53,7 @@ type Resolver struct {
 func New() *Resolver {
 	return &Resolver{
 		IPToHosts:       make(map[string]*HostMapping),
-		HostToIPs:       make(map[string][]string),
+		processedHosts:  make(map[string]bool),
 		hostnameRegex:   regexp.MustCompile(`(?i)(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}`),
 		ipv4Regex:       regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b`),
 		ipv6Regex:       regexp.MustCompile(`(?i)(?:\[)?(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?:\])?`),
@@ -88,7 +69,6 @@ func (r *Resolver) IngestEndpoints(endpoints ...string) {
 		r.extractEndpoints(endpoint)
 	}
 }
-
 
 func (r *Resolver) extractEndpoints(s string) {
 	hostPortMatches := r.hostnamePortReg.FindAllString(s, -1)
@@ -134,12 +114,17 @@ func (r *Resolver) addHostnamePort(hostPort string) {
 	}
 
 	r.addHostname(hostname)
-	r.addOriginal(hostPort)
 }
 
 func (r *Resolver) addHostname(hostname string) {
 	hostname = strings.ToLower(hostname)
 	hostname = strings.Trim(hostname, "[]")
+
+	// Skip if already processed
+	if r.processedHosts[hostname] {
+		return
+	}
+	r.processedHosts[hostname] = true
 
 	ips, err := net.LookupIP(hostname)
 	if err != nil {
@@ -147,25 +132,13 @@ func (r *Resolver) addHostname(hostname string) {
 	}
 
 	for _, ip := range ips {
-		ipStr := ip.String()
-		r.addIPMapping(ipStr, hostname)
+		r.addIPMapping(ip.String(), hostname)
 	}
-
-	ipStrs := make([]string, len(ips))
-	for i, ip := range ips {
-		ipStrs[i] = ip.String()
-	}
-	if len(ipStrs) > 0 {
-		r.HostToIPs[hostname] = ipStrs
-	}
-
-	r.addOriginal(hostname)
 }
 
 func (r *Resolver) addIPv4(ipStr string) {
 	if net.ParseIP(ipStr) != nil {
 		r.addIPMapping(ipStr, ipStr)
-		r.addOriginal(ipStr)
 	}
 }
 
@@ -173,14 +146,12 @@ func (r *Resolver) addIPv6(ipStr string) {
 	ipStr = strings.Trim(ipStr, "[]")
 	if net.ParseIP(ipStr) != nil {
 		r.addIPMapping(ipStr, ipStr)
-		r.addOriginal(ipStr)
 	}
 }
 
 func (r *Resolver) addIPMapping(ip, hostname string) {
 	if _, exists := r.IPToHosts[ip]; !exists {
 		r.IPToHosts[ip] = &HostMapping{
-			IPs:       []string{},
 			Originals: []string{},
 		}
 	}
@@ -191,28 +162,12 @@ func (r *Resolver) addIPMapping(ip, hostname string) {
 	}
 }
 
-func (r *Resolver) addOriginal(_ string) {
-}
-
 // Lookup returns possible hostnames for a given IP address.
 func (r *Resolver) Lookup(ip string) []string {
 	if mapping, exists := r.IPToHosts[ip]; exists {
 		return mapping.Originals
 	}
 	return nil
-}
-
-// PrintResults outputs the resolved mappings.
-func (r *Resolver) PrintResults() {
-	fmt.Println("=== IP to Hostnames ===")
-	for ip, mapping := range r.IPToHosts {
-		fmt.Printf("%s -> %v\n", ip, mapping.Originals)
-	}
-
-	fmt.Println("\n=== Hostname to IPs ===")
-	for hostname, ips := range r.HostToIPs {
-		fmt.Printf("%s -> %v\n", hostname, ips)
-	}
 }
 
 func contains(slice []string, item string) bool {

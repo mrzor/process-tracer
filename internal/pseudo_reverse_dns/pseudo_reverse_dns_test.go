@@ -132,7 +132,7 @@ func TestExtractEndpoints(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Reset resolver state
 			resolver.IPToHosts = make(map[string]*HostMapping)
-			resolver.HostToIPs = make(map[string][]string)
+			resolver.processedHosts = make(map[string]bool)
 
 			resolver.extractEndpoints(tt.input)
 
@@ -153,7 +153,7 @@ func TestExtractEndpoints(t *testing.T) {
 			if tt.wantIPv6 {
 				assert.True(t, hasIPv6, "Expected to extract IPv6. IPToHosts: %v", resolver.IPToHosts)
 			}
-			if tt.checkDNS && len(resolver.HostToIPs) == 0 {
+			if tt.checkDNS && len(resolver.processedHosts) == 0 {
 				t.Logf("Note: DNS resolution failed for hostname (may be OK in test environment)")
 			}
 		})
@@ -174,10 +174,4 @@ func TestLookup(t *testing.T) {
 	// Lookup non-existent IP should return nil
 	hosts = resolver.Lookup("1.2.3.4")
 	assert.Nil(t, hosts, "Expected nil for non-existent IP")
-}
-
-func TestStaticSourceInterface(t *testing.T) {
-	// Verify that our sources implement the interface correctly
-	var _ StaticSource = &EnvironSource{}
-	var _ StaticSource = &CmdlineSource{}
 }

@@ -2,10 +2,13 @@
 package config
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"strings"
+
+	"github.com/urfave/cli/v3"
 )
 
 // CustomAttribute represents a custom span attribute with an expression.
@@ -26,82 +29,118 @@ type Config struct {
 	CustomAttributes []CustomAttribute
 }
 
-// ParseArgs parses command-line arguments and returns a Config.
-// Expected format: program_name [--trace-id <id>] [-a name expr]... -- <command> [args...].
+// ParseArgs parses command-line arguments using urfave/cli and returns a Config.
+// Expected format: program_name [--trace-id <id>] [-a name=expr]... -- <command> [args...].
 func ParseArgs(args []string) (*Config, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("no arguments provided")
-	}
-
-	programName := args[0]
 	var traceID string
 	var customAttrs []CustomAttribute
+	var attrArgs []string
+	var resultCfg *Config
 
-	// Find the "--" separator
-	cmdStart := -1
-	for i := 1; i < len(args); i++ {
-		if args[i] == "--" {
-			cmdStart = i + 1
-			break
-		}
+	app := &cli.Command{
+		Name:  "process-tracer",
+		Usage: "eBPF-based process and network tracer with OpenTelemetry span integration",
+		UsageText: "process-tracer [OPTIONS] -- COMMAND [ARGS...]\n\n" +
+			"   Use '--' to separate options from the command to trace.\n\n" +
+			"EXAMPLES:\n" +
+			"   process-tracer -- bash -c 'echo hello'\n" +
+			"   process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- ls -la\n" +
+			"   process-tracer -a env_name='env[\"ENVIRONMENT\"]' -- command args\n" +
+			"   process-tracer -a foo='env[\"FOO\"]' -a bar='args[0]' -- cmd",
+		Version: "dev",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:    "trace-id",
+				Aliases: []string{"t"},
+				Usage:   "OpenTelemetry trace ID (32 hex characters, auto-generated if not provided)",
+				Action: func(_ context.Context, _ *cli.Command, s string) error {
+					if s == "" {
+						return nil
+					}
+					// Validate: must be 32 hex chars
+					if len(s) != 32 {
+						return fmt.Errorf("trace ID must be 32 hex characters, got %d", len(s))
+					}
+					if _, err := hex.DecodeString(s); err != nil {
+						return fmt.Errorf("trace ID must be valid hex: %w", err)
+					}
+					traceID = strings.ToLower(s)
+					return nil
+				},
+			},
+			&cli.StringSliceFlag{
+				Name:        "a",
+				Aliases:     []string{"attribute"},
+				Usage:       "Add custom span attribute as NAME=EXPR (repeatable)",
+				Destination: &attrArgs,
+			},
+		},
+		UseShortOptionHandling: true,
+		Action: func(_ context.Context, cmd *cli.Command) error {
+			// Parse custom attributes from -a flags
+			for _, attrStr := range attrArgs {
+				// Split on first '=' to separate name from expression
+				parts := strings.SplitN(attrStr, "=", 2)
+				if len(parts) != 2 {
+					return fmt.Errorf("invalid attribute format %q: expected NAME=EXPR", attrStr)
+				}
+				name := strings.TrimSpace(parts[0])
+				expr := strings.TrimSpace(parts[1])
 
-		// Parse --trace-id flag
-		if args[i] == "--trace-id" {
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("--trace-id requires a value")
+				if name == "" {
+					return fmt.Errorf("attribute name cannot be empty in %q", attrStr)
+				}
+				if expr == "" {
+					return fmt.Errorf("attribute expression cannot be empty in %q", attrStr)
+				}
+
+				customAttrs = append(customAttrs, CustomAttribute{
+					Name:       name,
+					Expression: expr,
+				})
 			}
-			traceID = args[i+1]
-			i++ // skip the value
-			continue
-		}
 
-		// Parse -a flag (custom attribute)
-		if args[i] == "-a" {
-			if i+2 >= len(args) {
-				return nil, fmt.Errorf("-a requires attribute name and expression")
+			// Get the command and its arguments
+			cmdArgs := cmd.Args().Slice()
+			if len(cmdArgs) == 0 {
+				return fmt.Errorf("no command specified\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer -a env_name='env[\"ENVIRONMENT\"]' -- bash -c 'echo hello'")
 			}
-			customAttrs = append(customAttrs, CustomAttribute{
-				Name:       args[i+1],
-				Expression: args[i+2],
-			})
-			i += 2 // skip name and expression
-			continue
-		}
+
+			// Generate trace ID if not provided
+			if traceID == "" {
+				var err error
+				traceID, err = generateTraceID()
+				if err != nil {
+					return fmt.Errorf("failed to generate trace ID: %w", err)
+				}
+			}
+
+			// Store config for return
+			resultCfg = &Config{
+				Command:          cmdArgs[0],
+				Args:             cmdArgs[1:],
+				TraceID:          traceID,
+				CustomAttributes: customAttrs,
+			}
+
+			return nil
+		},
 	}
 
-	if cmdStart == -1 || cmdStart >= len(args) {
-		//nolint:staticcheck // Usage strings conventionally start with "Usage:"
-		return nil, fmt.Errorf("Usage: %s [--trace-id <id>] [-a name expr]... -- <command> [args...]\nExample: %s -a env_name 'env[\"ENVIRONMENT\"]' -- bash -c 'echo hello'",
-			programName, programName)
+	// Run the app
+	err := app.Run(context.Background(), args)
+
+	// If help or version was requested, the app exits early - this is expected
+	// In that case, resultCfg will be nil and we should return the error
+	if err != nil {
+		return nil, err
 	}
 
-	cmdArgs := args[cmdStart:]
-
-	// Validate or generate trace ID
-	if traceID != "" {
-		// Validate: must be 32 hex chars
-		if len(traceID) != 32 {
-			return nil, fmt.Errorf("trace ID must be 32 hex characters, got %d", len(traceID))
-		}
-		if _, err := hex.DecodeString(traceID); err != nil {
-			return nil, fmt.Errorf("trace ID must be valid hex: %w", err)
-		}
-		traceID = strings.ToLower(traceID)
-	} else {
-		// Auto-generate random 128-bit trace ID
-		var err error
-		traceID, err = generateTraceID()
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate trace ID: %w", err)
-		}
+	if resultCfg == nil {
+		return nil, fmt.Errorf("failed to parse configuration")
 	}
 
-	return &Config{
-		Command:          cmdArgs[0],
-		Args:             cmdArgs[1:],
-		TraceID:          traceID,
-		CustomAttributes: customAttrs,
-	}, nil
+	return resultCfg, nil
 }
 
 // generateTraceID generates a random 128-bit trace ID as 32 hex chars.

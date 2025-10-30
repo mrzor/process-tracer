@@ -38,22 +38,33 @@ sudo ./process-tracer -- command ...
 sudo mise setcap
 ./process-tracer -- command ...
 
-# Set trace_id (defaults to a random one) and parent_id (defaults to nul)
-./process-tracer -t trace-id -p parent-id -- command ...
+# Set trace_id (defaults to a random one)
+./process-tracer --trace-id a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
+# Or use short form
+./process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
 
-# Set extra attributes from environment
-./process-tracer -a extra.attribute.name 'env["EXTRA_ATTR"]' -- command ...
+# Set extra attributes from environment (using NAME=EXPR format)
+./process-tracer -a extra.attribute.name='env["EXTRA_ATTR"]' -- command ...
+
+# Multiple attributes
+./process-tracer -a env_name='env["ENVIRONMENT"]' -a pod='env["POD_NAME"]' -- command ...
+
+# Show help
+./process-tracer --help
 ```
 
 ## Expressions
 
-The `-a` and `-t` accept any valid [expr](https://expr-lang.org/) expression.
+The `-a` flag accepts any valid [expr](https://expr-lang.org/) expression.
 
 The process environment is bound to `env`, the full commandline to `cmdline` and
 individual commandline atoms to `args`.
 
 This gives you some flexibility if you're integrating in some CI environment,
 convoluted build system and whatnot.
+
+Note: The `--trace-id` / `-t` flag expects a 32-character hexadecimal string (128-bit trace ID),
+not an expression.
 
 ## Development
 

@@ -1,36 +1,55 @@
 # process-tracer
 
-An eBPF-based process and network tracer with OpenTelemetry span integration.
+An eBPF-based process and network otel-tracer.
 
-The quality bar is MEH and it will stay there until further notice.
+The quality bar is MEH and it's unlikely to significantly improve.
 
 This has been largely vibe-coded [1]. If you distrust outputs from coding agents, you might
 want to read all the source-code. Alternatively, you're invited to try it: it mostly works.
 
-Traces process execution trees and TCP connections, outputting structured logs with OpenTelemetry trace/span IDs for distributed tracing workflows.
-
 Process-level tracing is generally not done for a reason that eludes me, and I believe I
 need it, so here this is. The TCP thing is super rudimentary compared to any professional
-alternative. It may or may not improve over time.
+alternative.
 
-[1] This README was, however, written by an ape, as one would figure out from the lack of bullet points and surprising absence of emojis.
+[1] This README was, however, written by an ape, as one would figure out from the lack of
+bullet points and surprising absence of emojis.
+
+## Key Features
+
+- Process tree tracing with parent-child relationships
+- TCP connection tracking (connect/close events)
+- Rudimentary hackish pseudo reverse-DNS system
+- Expr expressions can be used to add extra attributes to spans
 
 ## Quick Start
 
 ```bash
 # Build
-mise run go-build
+mise go-build
 
 # Run
-sudo ./process-tracer -- <command>
+sudo ./process-tracer -- command ...
+
+# Alternative
+sudo mise setcap
+./process-tracer -- command ...
+
+# Set trace_id (defaults to a random one) and parent_id (defaults to nul)
+./process-tracer -t trace-id -p parent-id -- command ...
+
+# Set extra attributes from environment
+./process-tracer -a extra.attribute.name 'env["EXTRA_ATTR"]' -- command ...
 ```
 
-## Features
+## Expressions
 
-- Process tree tracing with parent-child relationships
-- TCP connection tracking (connect/close events)
-- OpenTelemetry trace/span ID generation
-- Automatic hostname resolution for TCP endpoints (really hackish)
+The `-a` and `-t` accept any valid [expr](https://expr-lang.org/) expression.
+
+The process environment is bound to `env`, the full commandline to `cmdline` and
+individual commandline atoms to `args`.
+
+This gives you some flexibility if you're integrating in some CI environment,
+convoluted build system and whatnot.
 
 ## Development
 

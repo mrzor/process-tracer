@@ -9,7 +9,7 @@ import (
 	"log"
 
 	"github.com/mrzor/process-tracer/internal/bpf"
-	"github.com/mrzor/process-tracer/internal/output"
+	"github.com/mrzor/process-tracer/internal/eventprocessor"
 
 	"github.com/cilium/ebpf/ringbuf"
 )
@@ -17,12 +17,12 @@ import (
 // Stream reads events from a ringbuffer and dispatches them to a handler.
 type Stream struct {
 	reader  *ringbuf.Reader
-	handler output.EventHandler
+	handler eventprocessor.EventHandler
 	stopCh  chan struct{}
 }
 
 // New creates a new Stream with the given ringbuffer reader and event handler.
-func New(reader *ringbuf.Reader, handler output.EventHandler) *Stream {
+func New(reader *ringbuf.Reader, handler eventprocessor.EventHandler) *Stream {
 	return &Stream{
 		reader:  reader,
 		handler: handler,

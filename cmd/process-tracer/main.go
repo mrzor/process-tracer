@@ -15,10 +15,13 @@ import (
 
 	"github.com/mrzor/process-tracer/internal/bpfloader"
 	"github.com/mrzor/process-tracer/internal/config"
+	"github.com/mrzor/process-tracer/internal/eventprocessor"
 	"github.com/mrzor/process-tracer/internal/eventstream"
 	"github.com/mrzor/process-tracer/internal/otel"
 	"github.com/mrzor/process-tracer/internal/output"
+	"github.com/mrzor/process-tracer/internal/procmeta"
 	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
+	"github.com/mrzor/process-tracer/internal/timesync"
 )
 
 func main() {
@@ -101,17 +104,44 @@ func run() error {
 		}
 	}()
 
-	// Initialize pseudo reverse DNS resolver
-	// Environment and command-line data comes from eBPF events (EVENT_ENV_VAR, EVENT_EXEC_ENV_CHUNK)
-	// and is fed directly to the resolver via IngestEndpoints() in the OTEL formatter
+	// Initialize components following the new architecture
+
+	// 1. Create time converter (pure utility)
+	converter, err := timesync.NewConverter()
+	if err != nil {
+		return fmt.Errorf("failed to create time converter: %w", err)
+	}
+
+	// 2. Create process metadata manager (lifecycle management)
+	metadataManager := procmeta.NewManager()
+
+	// 3. Initialize pseudo reverse DNS resolver (enrichment)
 	resolver := pseudo_reverse_dns.New()
 
-	// Create event stream with OTEL formatter
-	formatter, err := output.NewOTELFormatter(tracer, cfg.TraceID, cfg.ParentID, resolver, cfg.CustomAttributes)
+	// 4. Create OTEL formatter (pure formatting layer)
+	formatter, err := output.NewOTELFormatter(
+		tracer,
+		converter,
+		resolver,
+		metadataManager,
+		cfg.CustomAttributes,
+		cfg.TraceID,
+		cfg.ParentID,
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create OTEL formatter: %w", err)
 	}
-	stream := eventstream.New(rd, formatter)
+
+	// 5. Create event processor (coordinates everything)
+	processor := eventprocessor.NewProcessor(
+		metadataManager,
+		resolver,
+		formatter, // ProcessEventHandler
+		formatter, // TCPEventHandler
+	)
+
+	// 6. Create event stream with processor
+	stream := eventstream.New(rd, processor)
 
 	// Create context for event stream
 	ctx, cancel := context.WithCancel(context.Background())

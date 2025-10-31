@@ -31,7 +31,9 @@
       "Bash(go generate:*)",
       "Bash(sed:*)",
       "Bash(find:*)",
-      "Bash(dmesg:*)"
+      "Bash(dmesg:*)",
+      "Bash(scc:*)",
+      "Bash(go fmt:*)"
     ],
     "deny": [],
     "ask": []

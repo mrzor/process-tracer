@@ -3,6 +3,7 @@ go = "1.25"
 golangci-lint = "2"
 lefthook = "latest"
 rust = "nightly"
+"ubi:rhysd/actionlint" = "latest"
 
 [env]
 OTEL_SERVICE_NAME = "u_go_trace"

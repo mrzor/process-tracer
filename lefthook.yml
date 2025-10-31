@@ -11,3 +11,6 @@ pre-commit:
       glob: "*.{c,h}"
       root: "internal/bpf/"
       run: bpflinter {staged_files} || true
+    actionlint:
+      glob: ".github/workflows/*.{yml,yaml}"
+      run: actionlint {staged_files}

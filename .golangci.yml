@@ -41,145 +41,142 @@ linters:
     - godot           # Check comments end in period
     - nolintlint      # Enforce proper nolint directives
 
-formatters:
-  enable:
-    - gofmt           # Check formatting
-    - goimports       # Check imports
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-
-  govet:
-    enable-all: true
-    disable:
-      - shadow  # Often too strict for eBPF code with reused variable names
-
-  gocyclo:
-    min-complexity: 15
-
-  dupl:
-    threshold: 100
-
-  goconst:
-    min-len: 3
-    min-occurrences: 3
-    ignore-tests: true
-
-  misspell:
-    locale: US
-
-  revive:
+  exclusions:
     rules:
-      - name: blank-imports
-      - name: context-as-argument
-      - name: context-keys-type
-      - name: dot-imports
-      - name: error-return
-      - name: error-strings
-      - name: error-naming
-      - name: exported
-      - name: increment-decrement
-      - name: var-naming
-      - name: var-declaration
-      - name: package-comments
-      - name: range
-      - name: receiver-naming
-      - name: time-naming
-      - name: unexported-return
-      - name: indent-error-flow
-      - name: errorf
-      - name: empty-block
-      - name: superfluous-else
-      - name: unused-parameter
-      - name: unreachable-code
-      - name: redefines-builtin-id
+      # Exclude some linters from running on tests
+      - path: _test\.go
+        linters:
+          - dupl
+          - gosec
+          - gocyclo
+          - revive
+          - testpackage
 
-  gosec:
-    excludes:
-      - G404  # Allow weak random for non-crypto uses
-    config:
-      G306: "0644"  # File permissions for non-sensitive files
+      # Exclude generated eBPF files from most checks
+      - path: processtracer_.*\.go
+        linters:
+          - all
+        text: ""
 
-  staticcheck:
-    checks: ["all"]
+      # Allow globals in main and eBPF loader code
+      - path: (main|loader)\.go
+        linters:
+          - gochecknoglobals
 
-  testifylint:
-    enable-all: true
+      # Allow long functions in BPF loader (complex initialization)
+      - path: internal/bpfloader/
+        linters:
+          - funlen
+          - gocyclo
+
+      # Allow prealloc for slices where size is unknown
+      - path: internal/pseudo_reverse_dns/
+        linters:
+          - prealloc
+
+      # Allow context as second parameter in shutdown function (idiomatic for cleanup)
+      - text: "context.Context should be the first parameter"
+        linters:
+          - revive
+
+      # Usage strings typically start with "Usage:" which is capitalized
+      - text: "error strings should not be capitalized"
+        path: internal/config/config.go
+        linters:
+          - staticcheck
+
+      # eBPF requires unsafe for C struct interop
+      - text: "G103:"
+        linters:
+          - gosec
+
+      # This is a tracer - it needs to launch subprocesses
+      - text: "G204:"
+        linters:
+          - gosec
+
+      # Need to read from /proc filesystem for process metadata
+      - text: "G304:"
+        linters:
+          - gosec
+
+      # Integer conversions required for eBPF/kernel data types
+      - text: "G115:"
+        linters:
+          - gosec
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+
+    govet:
+      enable-all: true
+      disable:
+        - shadow  # Often too strict for eBPF code with reused variable names
+
+    gocyclo:
+      min-complexity: 15
+
+    dupl:
+      threshold: 100
+
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+
+    misspell:
+      locale: US
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+    gosec:
+      excludes:
+        - G404  # Allow weak random for non-crypto uses
+      config:
+        G306: "0644"  # File permissions for non-sensitive files
+
+    staticcheck:
+      checks: ["all"]
+
+    testifylint:
+      enable-all: true
 
 issues:
-  exclude-rules:
-    # Exclude some linters from running on tests
-    - path: _test\.go
-      linters:
-        - dupl
-        - gosec
-        - gocyclo
-        - revive
-        - testpackage
-
-    # Exclude generated eBPF files from most checks
-    - path: processtracer_.*\.go
-      linters:
-        - all
-      text: ""
-
-    # Allow globals in main and eBPF loader code
-    - path: (main|loader)\.go
-      linters:
-        - gochecknoglobals
-
-    # Allow long functions in BPF loader (complex initialization)
-    - path: internal/bpfloader/
-      linters:
-        - funlen
-        - gocyclo
-
-    # Allow prealloc for slices where size is unknown
-    - path: internal/pseudo_reverse_dns/
-      linters:
-        - prealloc
-
-    # Allow context as second parameter in shutdown function (idiomatic for cleanup)
-    - text: "context.Context should be the first parameter"
-      linters:
-        - revive
-
-    # Usage strings typically start with "Usage:" which is capitalized
-    - text: "error strings should not be capitalized"
-      path: internal/config/config.go
-      linters:
-        - staticcheck
-
-    # eBPF requires unsafe for C struct interop
-    - text: "G103:"
-      linters:
-        - gosec
-
-    # This is a tracer - it needs to launch subprocesses
-    - text: "G204:"
-      linters:
-        - gosec
-
-    # Need to read from /proc filesystem for process metadata
-    - text: "G304:"
-      linters:
-        - gosec
-
-    # Integer conversions required for eBPF/kernel data types
-    - text: "G115:"
-      linters:
-        - gosec
-
   max-issues-per-linter: 0
   max-same-issues: 0
 
 output:
   formats:
-    colored-line-number:
+    text:
       path: stdout
-  print-issued-lines: true
-  print-linter-name: true
-  uniq-by-line: true
-  sort-results: true
+      print-issued-lines: true
+      print-linter-name: true
+  sort-order:
+    - linter
+    - severity
+    - file

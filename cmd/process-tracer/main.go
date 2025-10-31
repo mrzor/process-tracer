@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log"
 	"os"
@@ -23,6 +24,9 @@ import (
 	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
 	"github.com/mrzor/process-tracer/internal/timesync"
 )
+
+//go:embed LICENSE
+var licenseText string
 
 func main() {
 	if err := run(); err != nil {
@@ -48,7 +52,7 @@ func getTCPFinTimeout() int {
 
 func run() error {
 	// Parse command line arguments
-	cfg, err := config.ParseArgs(os.Args)
+	cfg, err := config.ParseArgs(os.Args, licenseText)
 	if err != nil {
 		return err
 	}

@@ -33,7 +33,8 @@ type Config struct {
 
 // ParseArgs parses command-line arguments using urfave/cli and returns a Config.
 // Expected format: program_name [--trace-id <id>] [--parent-id <id>] [-a name=expr]... -- <command> [args...].
-func ParseArgs(args []string) (*Config, error) {
+// licenseText is displayed when --license flag is used.
+func ParseArgs(args []string, licenseText string) (*Config, error) {
 	var traceID string
 	var parentID string
 	var customAttrs []CustomAttribute
@@ -52,6 +53,17 @@ func ParseArgs(args []string) (*Config, error) {
 			"   process-tracer -a foo='env[\"FOO\"]' -a bar='args[0]' -- cmd",
 		Version: "dev",
 		Flags: []cli.Flag{
+			&cli.BoolFlag{
+				Name:  "license",
+				Usage: "Display license information and exit",
+				Action: func(_ context.Context, _ *cli.Command, b bool) error {
+					if b {
+						fmt.Println(licenseText)
+						return cli.Exit("", 0)
+					}
+					return nil
+				},
+			},
 			&cli.StringFlag{
 				Name:    "trace-id",
 				Aliases: []string{"t"},

@@ -398,8 +398,8 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     pid_tgid = bpf_get_current_pid_tgid();
     pid = pid_tgid >> 32;
 
-    task = (struct task_struct *)bpf_get_current_task();
-    ppid = BPF_CORE_READ(task, real_parent, tgid);
+    task = (struct task_struct *)bpf_get_current_task_btf();
+    ppid = bpf_core_cast(task, struct task_struct)->real_parent->tgid;
 
     /* Check if parent is tracked, if so track this child too */
     if (!bpf_map_lookup_elem(&tracked_pids, &ppid))
@@ -458,17 +458,17 @@ int handle_exit(struct trace_event_raw_sched_process_template *ctx)
     if (!e)
         return 0;
 
-    task = (struct task_struct *)bpf_get_current_task();
+    task = (struct task_struct *)bpf_get_current_task_btf();
 
     e->type = EVENT_EXIT;
     e->pid = pid;
     e->uid = (u32)uid_gid;
     e->timestamp = bpf_ktime_get_ns();
 
-    ppid = BPF_CORE_READ(task, real_parent, tgid);
+    ppid = bpf_core_cast(task, struct task_struct)->real_parent->tgid;
     e->ppid = ppid;
 
-    e->data.proc.exit_code = (BPF_CORE_READ(task, exit_code) >> 8) & 0xff;
+    e->data.proc.exit_code = (bpf_core_cast(task, struct task_struct)->exit_code >> 8) & 0xff;
 
     bpf_get_current_comm(&e->data.proc.comm, sizeof(e->data.proc.comm));
 
@@ -520,9 +520,9 @@ int BPF_KRETPROBE(tcp_v4_connect_exit, int ret)
         return 0;
 
     /* Extract connection info from sock struct */
-    family = BPF_CORE_READ(sk, __sk_common.skc_family);
-    sport = bpf_ntohs(BPF_CORE_READ(sk, __sk_common.skc_num));
-    dport = bpf_ntohs(BPF_CORE_READ(sk, __sk_common.skc_dport));
+    family = bpf_core_cast(sk, struct sock)->__sk_common.skc_family;
+    sport = bpf_ntohs(bpf_core_cast(sk, struct sock)->__sk_common.skc_num);
+    dport = bpf_ntohs(bpf_core_cast(sk, struct sock)->__sk_common.skc_dport);
     skaddr = (u64)sk;
 
     /* Store in active connections map */
@@ -547,8 +547,8 @@ int BPF_KRETPROBE(tcp_v4_connect_exit, int ret)
     e->data.tcp.family = family;
 
     /* Read addresses - IPv4 only for tcp_v4_connect */
-    saddr = BPF_CORE_READ(sk, __sk_common.skc_rcv_saddr);
-    daddr = BPF_CORE_READ(sk, __sk_common.skc_daddr);
+    saddr = bpf_core_cast(sk, struct sock)->__sk_common.skc_rcv_saddr;
+    daddr = bpf_core_cast(sk, struct sock)->__sk_common.skc_daddr;
     bpf_probe_read_kernel(e->data.tcp.saddr, 4, &saddr);
     bpf_probe_read_kernel(e->data.tcp.daddr, 4, &daddr);
 
@@ -595,9 +595,9 @@ int BPF_KRETPROBE(tcp_v6_connect_exit, int ret)
         return 0;
 
     /* Extract connection info */
-    family = BPF_CORE_READ(sk, __sk_common.skc_family);
-    sport = bpf_ntohs(BPF_CORE_READ(sk, __sk_common.skc_num));
-    dport = bpf_ntohs(BPF_CORE_READ(sk, __sk_common.skc_dport));
+    family = bpf_core_cast(sk, struct sock)->__sk_common.skc_family;
+    sport = bpf_ntohs(bpf_core_cast(sk, struct sock)->__sk_common.skc_num);
+    dport = bpf_ntohs(bpf_core_cast(sk, struct sock)->__sk_common.skc_dport);
     skaddr = (u64)sk;
 
     /* Store in active connections map */
@@ -638,10 +638,10 @@ int handle_inet_sock_set_state(struct trace_event_raw_inet_sock_set_state *ctx)
     u16 newstate, sport, dport;
 
     /* Read required fields */
-    newstate = BPF_CORE_READ(ctx, newstate);
-    skaddr = (__u64)BPF_CORE_READ(ctx, skaddr);
-    sport = BPF_CORE_READ(ctx, sport);
-    dport = BPF_CORE_READ(ctx, dport);
+    newstate = bpf_core_cast(ctx, struct trace_event_raw_inet_sock_set_state)->newstate;
+    skaddr = (__u64)bpf_core_cast(ctx, struct trace_event_raw_inet_sock_set_state)->skaddr;
+    sport = bpf_core_cast(ctx, struct trace_event_raw_inet_sock_set_state)->sport;
+    dport = bpf_core_cast(ctx, struct trace_event_raw_inet_sock_set_state)->dport;
 
     /* Only handle TCP_CLOSE events now - connection tracking done in kprobes */
     if (newstate != TCP_CLOSE)

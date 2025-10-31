@@ -2,6 +2,7 @@
 go = "1.25"
 golangci-lint = "2"
 lefthook = "latest"
+rust = "nightly"
 
 [env]
 OTEL_SERVICE_NAME = "u_go_trace"
@@ -33,3 +34,7 @@ run = "golangci-lint run ./..."
 [tasks.lint-fix]
 description = "Run golangci-lint and auto-fix issues where possible"
 run = "golangci-lint run --fix ./..."
+
+[tasks.install-bpflint]
+description = "Install bpflint from GitHub"
+run = "cargo install --git https://github.com/d-e-s-o/bpflint.git bpflinter"

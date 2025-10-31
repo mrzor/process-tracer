@@ -7,3 +7,7 @@ pre-commit:
     tests:
       glob: "*.go"
       run: go test -short ./...
+    bpflint:
+      glob: "*.{c,h}"
+      root: "internal/bpf/"
+      run: bpflinter {staged_files} || true

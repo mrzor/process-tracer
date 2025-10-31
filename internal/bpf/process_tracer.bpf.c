@@ -147,8 +147,11 @@ static long read_var_callback(u32 index, void *ctx)
     }
     
     /* Bounds check again after clamping */
-    if (var_len > MAX_ENV_VALUE_SIZE)
+    if (var_len > MAX_ENV_VALUE_SIZE) {
         var_len = MAX_ENV_VALUE_SIZE;
+        lctx->chunk->truncated = 1;
+    }
+
     if (var_len <= 0) {
         lctx->done = 1;
         return 1;
@@ -204,7 +207,7 @@ static __always_inline void send_env_multi_chunk(u32 pid, u64 argv_addr, u64 env
     chunk->type = EVENT_EXEC_ENV_CHUNK;
     chunk->chunk_id = 0;
     chunk->is_final = 1;
-    chunk->truncated = 1;
+    chunk->truncated = 0;
     chunk->argc = 0;
 
     /* Read command-line arguments using bpf_loop() */

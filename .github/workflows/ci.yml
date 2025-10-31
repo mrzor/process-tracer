@@ -29,6 +29,9 @@ jobs:
       - name: Install BPF dependencies
         run: sudo apt-get update && sudo apt-get install -y clang llvm libbpf-dev linux-headers-generic
 
+      - name: Generate vmlinux.h
+        run: bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
+
       - name: Generate BPF bindings
         run: go generate ./internal/bpf
 
@@ -55,6 +58,9 @@ jobs:
 
       - name: Install BPF dependencies
         run: sudo apt-get update && sudo apt-get install -y clang llvm libbpf-dev linux-headers-generic
+
+      - name: Generate vmlinux.h
+        run: bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
 
       - name: Generate BPF bindings
         run: go generate ./internal/bpf

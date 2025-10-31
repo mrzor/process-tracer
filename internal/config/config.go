@@ -23,9 +23,13 @@ type Config struct {
 	Command string
 	// Args are the arguments to pass to the command
 	Args []string
-	// TraceID is the OpenTelemetry trace ID (expr expression or 32 hex chars)
+	// TraceID is an optional expression to evaluate for the OpenTelemetry trace ID.
+	// If empty, the OpenTelemetry SDK will auto-generate a random trace ID.
+	// Examples: env["TRACE_ID"], "literal-string-to-hash", "a1b2...c3d4" (32 hex chars)
 	TraceID string
-	// ParentID is the OpenTelemetry parent span ID for the root span (expr expression or 16 hex chars)
+	// ParentID is an optional expression to evaluate for the OpenTelemetry parent span ID.
+	// If empty, the root span will have no parent.
+	// Examples: env["PARENT_SPAN_ID"], "0123456789abcdef" (16 hex chars)
 	ParentID string
 	// CustomAttributes are user-defined span attributes with expressions
 	CustomAttributes []CustomAttribute
@@ -67,7 +71,7 @@ func ParseArgs(args []string, licenseText string) (*Config, error) {
 			&cli.StringFlag{
 				Name:    "trace-id",
 				Aliases: []string{"t"},
-				Usage:   "OpenTelemetry trace ID (expr expression or 32 hex chars, auto-generated if not provided)",
+				Usage:   "Expression to evaluate for OpenTelemetry trace ID (SDK auto-generates if not provided)",
 				Action: func(_ context.Context, _ *cli.Command, s string) error {
 					if s != "" {
 						traceID = s
@@ -78,7 +82,7 @@ func ParseArgs(args []string, licenseText string) (*Config, error) {
 			&cli.StringFlag{
 				Name:    "parent-id",
 				Aliases: []string{"p"},
-				Usage:   "OpenTelemetry parent span ID for root span (expr expression or 16 hex chars, null if not provided)",
+				Usage:   "Expression to evaluate for OpenTelemetry parent span ID (null if not provided)",
 				Action: func(_ context.Context, _ *cli.Command, s string) error {
 					if s != "" {
 						parentID = s
@@ -124,16 +128,10 @@ func ParseArgs(args []string, licenseText string) (*Config, error) {
 				return fmt.Errorf("no command specified\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer -a env_name='env[\"ENVIRONMENT\"]' -- bash -c 'echo hello'")
 			}
 
-			// Generate trace ID if not provided
-			if traceID == "" {
-				var err error
-				traceID, err = generateTraceID()
-				if err != nil {
-					return fmt.Errorf("failed to generate trace ID: %w", err)
-				}
-			}
-
 			// Store config for return
+			// Note: traceID and parentID remain empty strings if not provided by user
+			// They will be treated as expressions to evaluate, or trigger auto-generation
+			// if empty
 			resultCfg = &Config{
 				Command:          cmdArgs[0],
 				Args:             cmdArgs[1:],

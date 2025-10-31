@@ -18,8 +18,7 @@ func TestParseArgs_BasicCommand(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "echo", cfg.Command)
 	assert.Equal(t, []string{"hello"}, cfg.Args)
-	assert.NotEmpty(t, cfg.TraceID, "expected auto-generated trace ID")
-	assert.Len(t, cfg.TraceID, 32)
+	assert.Empty(t, cfg.TraceID, "trace ID should be empty when not provided (SDK will auto-generate)")
 	assert.Empty(t, cfg.CustomAttributes)
 }
 

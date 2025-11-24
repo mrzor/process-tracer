@@ -32,7 +32,7 @@ func New(reader *ringbuf.Reader, handler eventprocessor.EventHandler) *Stream {
 
 // Start begins reading events from the ringbuffer in a goroutine
 // It returns immediately and processes events in the background until
-// the context is cancelled or Stop is called.
+// the context is canceled or Stop is called.
 func (s *Stream) Start(ctx context.Context) error {
 	go s.processEvents(ctx)
 	return nil

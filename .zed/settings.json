@@ -1,0 +1,26 @@
+{
+  "languages": {
+    "Go": {
+      "language_servers": ["gopls", "golangci-lint"],
+      "format_on_save": "on"
+    }
+  },
+  "lsp": {
+    "golangci-lint": {
+      "initialization_options": {
+        "command": ["mise", "x", "--", "golangci-lint", "run", "--out-format", "json", "--issues-exit-code=1"]
+      }
+    },
+    "gopls": {
+      "initialization_options": {
+        "usePlaceholders": true,
+        "completeUnimported": true,
+        "analyses": {
+          "unusedparams": true,
+          "shadow": true
+        },
+        "staticcheck": false
+      }
+    }
+  }
+}

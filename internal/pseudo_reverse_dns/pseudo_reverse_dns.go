@@ -191,7 +191,6 @@ func (e *EnvironSource) Extract(pid int) ([]string, error) {
 		return nil, fmt.Errorf("failed to read %s: %w", environPath, err)
 	}
 
-	//nolint:prealloc // Size is unknown until parsing
 	var endpoints []string
 	envVars := bytes.Split(data, []byte{0})
 	for _, envVar := range envVars {
@@ -223,7 +222,6 @@ func (c *CmdlineSource) Extract(pid int) ([]string, error) {
 
 	// cmdline is null-byte separated arguments
 	args := bytes.Split(data, []byte{0})
-	//nolint:prealloc // Size is unknown until parsing
 	var endpoints []string
 	for _, arg := range args {
 		if len(arg) == 0 {

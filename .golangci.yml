@@ -1,4 +1,4 @@
-version: '2'
+version: "2"
 
 run:
   timeout: 5m
@@ -8,38 +8,38 @@ run:
 linters:
   enable:
     # Core quality linters (enabled by default in 2.x)
-    - errcheck        # Check unchecked errors
-    - govet           # Official Go tool
-    - ineffassign     # Detect ineffectual assignments
-    - staticcheck     # Advanced static analysis (includes gosimple)
-    - unused          # Detect unused code
+    - errcheck # Check unchecked errors
+    - govet # Official Go tool
+    - ineffassign # Detect ineffectual assignments
+    - staticcheck # Advanced static analysis (includes gosimple)
+    - unused # Detect unused code
 
     # Style and best practices
-    - misspell        # Fix spelling mistakes
-    - revive          # Fast, configurable, extensible linter
+    - misspell # Fix spelling mistakes
+    - revive # Fast, configurable, extensible linter
 
     # Code quality
-    - dupl            # Detect code duplication
-    - goconst         # Find repeated strings that could be constants
-    - gocyclo         # Cyclomatic complexity
-    - gosec           # Security issues
-    - unconvert       # Detect unnecessary type conversions
-    - gocritic        # Comprehensive Go linter
+    - dupl # Detect code duplication
+    - goconst # Find repeated strings that could be constants
+    - gocyclo # Cyclomatic complexity
+    - gosec # Security issues
+    - unconvert # Detect unnecessary type conversions
+    - gocritic # Comprehensive Go linter
 
     # Performance
-    - prealloc        # Find slice declarations that could be preallocated
+    - prealloc # Find slice declarations that could be preallocated
 
     # Errors
-    - errorlint       # Find misuses of error wrapping
-    - errname         # Check error naming conventions
+    - errorlint # Find misuses of error wrapping
+    - errname # Check error naming conventions
 
     # Testing
-    - testifylint     # Best practices for testify
-    - testpackage     # Enforce _test package naming
+    - testifylint # Best practices for testify
+    - testpackage # Enforce _test package naming
 
     # Maintenance
-    - godot           # Check comments end in period
-    - nolintlint      # Enforce proper nolint directives
+    - godot # Check comments end in period
+    - nolintlint # Enforce proper nolint directives
 
   exclusions:
     rules:
@@ -85,26 +85,6 @@ linters:
         linters:
           - staticcheck
 
-      # eBPF requires unsafe for C struct interop
-      - text: "G103:"
-        linters:
-          - gosec
-
-      # This is a tracer - it needs to launch subprocesses
-      - text: "G204:"
-        linters:
-          - gosec
-
-      # Need to read from /proc filesystem for process metadata
-      - text: "G304:"
-        linters:
-          - gosec
-
-      # Integer conversions required for eBPF/kernel data types
-      - text: "G115:"
-        linters:
-          - gosec
-
   settings:
     errcheck:
       check-type-assertions: true
@@ -113,7 +93,11 @@ linters:
     govet:
       enable-all: true
       disable:
-        - shadow  # Often too strict for eBPF code with reused variable names
+        - shadow # Often too strict for eBPF code with reused variable names
+        - fieldalignment # Struct field ordering is dictated by BPF/kernel data structures.
+          # We have to match C struct layouts exactly for eBPF interop, and the
+          # implicit alignment requirements are already painful enough without Go
+          # telling us to reorder fields that must match kernel conventions.
 
     gocyclo:
       min-complexity: 15
@@ -156,9 +140,9 @@ linters:
 
     gosec:
       excludes:
-        - G404  # Allow weak random for non-crypto uses
+        - G404 # Allow weak random for non-crypto uses
       config:
-        G306: "0644"  # File permissions for non-sensitive files
+        G306: "0644" # File permissions for non-sensitive files
 
     staticcheck:
       checks: ["all"]

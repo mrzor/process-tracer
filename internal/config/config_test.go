@@ -1,4 +1,3 @@
-//nolint:testpackage // Testing internal implementation details
 package config
 
 import (

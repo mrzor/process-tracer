@@ -11,7 +11,7 @@ import (
 
 // Event type constants matching kernel/C conventions.
 //
-//nolint:revive // ALL_CAPS naming matches C/kernel conventions
+//nolint:revive,staticcheck // ALL_CAPS naming matches C/kernel conventions
 const (
 	EVENT_EXEC           = 1
 	EVENT_EXIT           = 2

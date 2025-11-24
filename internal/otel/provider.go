@@ -109,8 +109,6 @@ func InitProvider(cfg *config.OTELConfig, _ string) (*sdktrace.TracerProvider, e
 }
 
 // ShutdownProvider gracefully shuts down the tracer provider, flushing any remaining spans.
-//
-//nolint:revive // ctx as second param is idiomatic for cleanup/shutdown functions
 func ShutdownProvider(tp *sdktrace.TracerProvider, ctx context.Context) error {
 	if tp == nil {
 		return nil

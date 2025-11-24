@@ -155,7 +155,6 @@ func TestManager_Concurrent(_ *testing.T) {
 			metadata := &ProcessMetadata{
 				Environ: map[string]string{"key": "value"},
 			}
-			//nolint:gosec // Test loop with bounded range
 			m.Set(uint32(i), metadata)
 			m.AddIssue(uint32(i), "issue")
 		}
@@ -163,7 +162,6 @@ func TestManager_Concurrent(_ *testing.T) {
 	}()
 
 	// Reader goroutine
-	//nolint:gosec // Test loop with bounded range
 	go func() {
 		for i := 0; i < 100; i++ {
 			_ = m.Get(uint32(i))

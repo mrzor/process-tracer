@@ -1,4 +1,3 @@
-//nolint:revive,testpackage // Package name uses descriptive underscores, testing internal details
 package pseudo_reverse_dns
 
 import (

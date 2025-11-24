@@ -133,7 +133,7 @@ func TestChunkReassembler_MissingChunk(t *testing.T) {
 	}
 	copy(chunk1.Data[:], []byte("echo\x00"))
 
-	_, _ = r.HandleChunk(chunk1)
+	_, _ = r.HandleChunk(chunk1) //nolint:errcheck // Test setup - intentionally ignoring non-final chunk
 
 	// Skip chunk 1, send chunk 2 as final
 	chunk3 := &bpf.EnvChunkEvent{

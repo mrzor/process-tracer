@@ -109,7 +109,7 @@ func (f *OTELFormatter) HandleProcessExec(pid, ppid, _ uint32, timestamp uint64,
 	ctx := context.Background()
 
 	if isRootSpan {
-		ctx, _ = f.createRootSpanContext(ctx, pid, metadata)
+		ctx, _ = f.createRootSpanContext(ctx, pid, metadata) //nolint:errcheck // XXX: Consider logging custom trace ID injection failures
 	} else if parentSpanCtx.IsValid() {
 		ctx = trace.ContextWithSpanContext(ctx, parentSpanCtx)
 	}
@@ -221,7 +221,7 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 	// Evaluate custom attributes
 	var customAttrs []attribute.KeyValue
 	if metadata != nil {
-		customAttrs, _ = f.attrEvaluator.EvaluateCustomAttributes(metadata)
+		customAttrs, _ = f.attrEvaluator.EvaluateCustomAttributes(metadata) //nolint:errcheck // XXX: Consider logging custom attribute evaluation failures
 	}
 
 	// Extract comm string

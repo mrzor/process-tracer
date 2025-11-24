@@ -50,7 +50,7 @@ func getSystemBootTime() (time.Time, error) {
 		return time.Time{}, fmt.Errorf("failed to open /proc/stat: %w", err)
 	}
 	defer func() {
-		_ = file.Close()
+		_ = file.Close() //nolint:errcheck // Read-only file, defer cleanup
 	}()
 
 	scanner := bufio.NewScanner(file)

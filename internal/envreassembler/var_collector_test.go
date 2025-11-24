@@ -37,7 +37,7 @@ func TestStreamingReassembler_HandleVar(t *testing.T) {
 	}
 	copy(arg1.Data[:], []byte("hello"))
 
-	result, _ = s.HandleVar(arg1)
+	result, _ = s.HandleVar(arg1) //nolint:errcheck // Test setup - intentionally ignoring non-final var
 	if result != nil {
 		t.Error("Expected nil result for non-final var")
 	}
@@ -52,7 +52,7 @@ func TestStreamingReassembler_HandleVar(t *testing.T) {
 	}
 	copy(env0.Data[:], []byte("PATH=/usr/bin"))
 
-	result, _ = s.HandleVar(env0)
+	result, _ = s.HandleVar(env0) //nolint:errcheck // Test setup - intentionally ignoring non-final var
 	if result != nil {
 		t.Error("Expected nil result for non-final var")
 	}
@@ -106,7 +106,7 @@ func TestStreamingReassembler_GappedIndices(t *testing.T) {
 	}
 	copy(arg0.Data[:], []byte("ls"))
 
-	_, _ = s.HandleVar(arg0)
+	_, _ = s.HandleVar(arg0) //nolint:errcheck // Test setup - sending first arg before testing gap handling
 
 	arg2 := &bpf.EnvVarEvent{
 		Pid:      1234,

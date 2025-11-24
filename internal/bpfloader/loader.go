@@ -40,28 +40,28 @@ func (l *Loader) closeErrorf(errstr string, e error) error {
 	// Close all links that may have been attached (nil-safe)
 	// We intentionally ignore errors during cleanup here since we're already in an error path
 	if l.tcpCloseLink != nil {
-		_ = l.tcpCloseLink.Close()
+		_ = l.tcpCloseLink.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	if l.tcpV6ConnectExit != nil {
-		_ = l.tcpV6ConnectExit.Close()
+		_ = l.tcpV6ConnectExit.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	if l.tcpV6ConnectEntry != nil {
-		_ = l.tcpV6ConnectEntry.Close()
+		_ = l.tcpV6ConnectEntry.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	if l.tcpV4ConnectExit != nil {
-		_ = l.tcpV4ConnectExit.Close()
+		_ = l.tcpV4ConnectExit.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	if l.tcpV4ConnectEntry != nil {
-		_ = l.tcpV4ConnectEntry.Close()
+		_ = l.tcpV4ConnectEntry.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	if l.exitLink != nil {
-		_ = l.exitLink.Close()
+		_ = l.exitLink.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	if l.execLink != nil {
-		_ = l.execLink.Close()
+		_ = l.execLink.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	if l.execveEnterLink != nil {
-		_ = l.execveEnterLink.Close()
+		_ = l.execveEnterLink.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
 	return fmt.Errorf("%s: %w", errstr, e)
 }

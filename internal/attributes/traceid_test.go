@@ -31,7 +31,10 @@ func TestTraceIDEvaluator_ValidHex(t *testing.T) {
 		t.Errorf("Expected no warnings for valid trace ID, got %d", len(warnings))
 	}
 
-	expectedTraceID, _ := trace.TraceIDFromHex("0123456789abcdef0123456789abcdef")
+	expectedTraceID, err := trace.TraceIDFromHex("0123456789abcdef0123456789abcdef")
+	if err != nil {
+		t.Fatalf("trace.TraceIDFromHex() error = %v", err)
+	}
 	if traceID != expectedTraceID {
 		t.Errorf("traceID = %v, want %v", traceID, expectedTraceID)
 	}
@@ -139,7 +142,10 @@ func TestParentIDEvaluator_ValidHex(t *testing.T) {
 		t.Errorf("Expected no warnings for valid span ID, got %d", len(warnings))
 	}
 
-	expectedSpanID, _ := trace.SpanIDFromHex("0123456789abcdef")
+	expectedSpanID, err := trace.SpanIDFromHex("0123456789abcdef")
+	if err != nil {
+		t.Fatalf("trace.SpanIDFromHex() error = %v", err)
+	}
 	if spanID != expectedSpanID {
 		t.Errorf("spanID = %v, want %v", spanID, expectedSpanID)
 	}

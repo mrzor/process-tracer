@@ -184,7 +184,7 @@ func run() error {
 	// Add child PID to tracked map
 	childPid := cmd.Process.Pid
 	if err := loader.TrackPID(childPid); err != nil {
-		_ = cmd.Process.Kill()
+		_ = cmd.Process.Kill() //nolint:errcheck // Best-effort cleanup in error path
 		return err
 	}
 
@@ -200,10 +200,10 @@ func run() error {
 	select {
 	case <-sigCh:
 		log.Println("Received signal, terminating...")
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		_ = cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck // Best-effort graceful shutdown; Kill() follows
 		// Give it a moment to exit gracefully
 		time.Sleep(100 * time.Millisecond)
-		_ = cmd.Process.Kill()
+		_ = cmd.Process.Kill() //nolint:errcheck // Best-effort cleanup during shutdown
 	case err := <-childDone:
 		if err != nil {
 			log.Printf("Child process exited with error: %v", err)

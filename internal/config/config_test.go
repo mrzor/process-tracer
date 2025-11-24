@@ -8,6 +8,7 @@ import (
 )
 
 const testParentID = "0123456789abcdef"
+const testTraceID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 const testLicenseText = "Test License Text"
 
 func TestParseArgs_BasicCommand(t *testing.T) {
@@ -22,22 +23,20 @@ func TestParseArgs_BasicCommand(t *testing.T) {
 }
 
 func TestParseArgs_WithTraceID(t *testing.T) {
-	traceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
-	args := []string{"process-tracer", "--trace-id", traceID, "--", "ls"}
+	args := []string{"process-tracer", "--trace-id", testTraceID, "--", "ls"}
 
 	cfg, err := ParseArgs(args, testLicenseText)
 	require.NoError(t, err)
-	assert.Equal(t, traceID, cfg.TraceID)
+	assert.Equal(t, testTraceID, cfg.TraceID)
 	assert.Equal(t, "ls", cfg.Command)
 }
 
 func TestParseArgs_WithTraceIDShortForm(t *testing.T) {
-	traceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
-	args := []string{"process-tracer", "-t", traceID, "--", "ls"}
+	args := []string{"process-tracer", "-t", testTraceID, "--", "ls"}
 
 	cfg, err := ParseArgs(args, testLicenseText)
 	require.NoError(t, err)
-	assert.Equal(t, traceID, cfg.TraceID)
+	assert.Equal(t, testTraceID, cfg.TraceID)
 }
 
 func TestParseArgs_TraceIDAsExpression(t *testing.T) {
@@ -97,12 +96,11 @@ func TestParseArgs_ParentIDAsExpression(t *testing.T) {
 }
 
 func TestParseArgs_WithTraceIDAndParentID(t *testing.T) {
-	traceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
-	args := []string{"process-tracer", "-t", traceID, "-p", testParentID, "--", "ls"}
+	args := []string{"process-tracer", "-t", testTraceID, "-p", testParentID, "--", "ls"}
 
 	cfg, err := ParseArgs(args, testLicenseText)
 	require.NoError(t, err)
-	assert.Equal(t, traceID, cfg.TraceID)
+	assert.Equal(t, testTraceID, cfg.TraceID)
 	assert.Equal(t, testParentID, cfg.ParentID)
 }
 

@@ -134,7 +134,7 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 
 	// If we don't have metadata yet, it will be provided via env chunks/vars
 	// For now, just delegate to the process handler
-	return p.processHandler.HandleProcessExec(event.Pid, event.Ppid, event.Uid, event.Timestamp, metadata)
+	return p.processHandler.HandleProcessExec(event.Pid, event.Ppid, event.UID, event.Timestamp, metadata)
 }
 
 // handleExit processes EXIT events.
@@ -144,7 +144,7 @@ func (p *Processor) handleExit(event *bpf.Event) error {
 		return nil
 	}
 
-	return p.processHandler.HandleProcessExit(event.Pid, event.Ppid, event.Uid, processData.ExitCode, event.Timestamp, processData.Comm[:])
+	return p.processHandler.HandleProcessExit(event.Pid, event.Ppid, event.UID, processData.ExitCode, event.Timestamp, processData.Comm[:])
 }
 
 // handleTCPConnect processes TCP CONNECT events.

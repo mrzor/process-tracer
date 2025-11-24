@@ -26,7 +26,7 @@ const (
 type Event struct {
 	Pid       uint32
 	Ppid      uint32
-	Uid       uint32 //nolint:revive // Matches kernel struct field naming
+	UID       uint32
 	Pad1      uint32 // Padding before timestamp to maintain 8-byte alignment
 	Timestamp uint64
 	Type      uint8
@@ -81,8 +81,8 @@ type TCPEventData struct {
 // Header fields match Event struct for consistent type detection at offset 24.
 type EnvChunkEvent struct {
 	Pid       uint32
-	Ppid      uint32  // Not used, but keeps layout consistent
-	Uid       uint32  //nolint:revive // Matches C struct field naming
+	Ppid      uint32 // Not used, but keeps layout consistent
+	UID       uint32
 	Pad1      uint32  // Padding before timestamp (matches Event struct)
 	Timestamp uint64  // Not used, but keeps layout consistent
 	Type      uint8   // EVENT_EXEC_ENV_CHUNK
@@ -102,7 +102,7 @@ type EnvChunkEvent struct {
 type EnvVarEvent struct {
 	Pid       uint32
 	Ppid      uint32
-	Uid       uint32 //nolint:revive // Matches C struct field naming
+	UID       uint32
 	Pad1      uint32 // Padding before timestamp
 	Timestamp uint64
 	Type      uint8   // EVENT_ENV_VAR

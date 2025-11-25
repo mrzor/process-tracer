@@ -26,6 +26,44 @@ jobs:
         with:
           go-version: '1.25'
 
+      - name: Install base dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            clang \
+            llvm \
+            gcc \
+            pkg-config \
+            libelf-dev \
+            libcap-dev \
+            libzstd-dev \
+            zlib1g-dev \
+            linux-headers-$(uname -r)
+
+      - name: Build latest libbpf from source
+        run: |
+          git clone https://github.com/libbpf/libbpf.git
+          cd libbpf/src
+          make -j $(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: Build latest bpftool from source
+        run: |
+          git clone --recurse-submodules https://github.com/libbpf/bpftool.git
+          cd bpftool/src
+          make -j $(nproc)
+          sudo make install
+
+      - name: Generate vmlinux.h
+        run: |
+          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
+
+      - name: Generate BPF bindings
+        run: go generate ./internal/bpf
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

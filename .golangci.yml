@@ -70,7 +70,7 @@ linters:
           - gocyclo
 
       # Allow prealloc for slices where size is unknown
-      - path: internal/pseudo_reverse_dns/
+      - path: internal/reversedns/
         linters:
           - prealloc
 

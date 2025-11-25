@@ -1,4 +1,4 @@
-// Package pseudo_reverse_dns provides connection enrichment by extracting network endpoints from
+// Package reversedns provides connection enrichment by extracting network endpoints from
 // process environment variables, command-line arguments, and runtime events.
 //
 // The core problem: when you observe raw socket operations (IP:port pairs), you lack semantic
@@ -13,7 +13,7 @@
 //
 // This is imperfect (misses some dynamic discovery, third-party connections) but extremely
 // practical: it catches 70-80% of meaningful connections with minimal overhead.
-package pseudo_reverse_dns
+package reversedns
 
 import (
 	"bytes"

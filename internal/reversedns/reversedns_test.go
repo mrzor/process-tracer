@@ -1,4 +1,4 @@
-package pseudo_reverse_dns
+package reversedns
 
 import (
 	"os"

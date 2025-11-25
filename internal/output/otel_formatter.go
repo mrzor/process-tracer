@@ -10,7 +10,7 @@ import (
 	"github.com/mrzor/process-tracer/internal/attributes"
 	"github.com/mrzor/process-tracer/internal/config"
 	"github.com/mrzor/process-tracer/internal/procmeta"
-	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
+	"github.com/mrzor/process-tracer/internal/reversedns"
 	"github.com/mrzor/process-tracer/internal/timesync"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -35,7 +35,7 @@ type tcpSpanInfo struct {
 type OTELFormatter struct {
 	tracer            trace.Tracer
 	converter         *timesync.Converter
-	resolver          *pseudo_reverse_dns.Resolver
+	resolver          *reversedns.Resolver
 	metadataManager   *procmeta.Manager
 	attrEvaluator     *attributes.Evaluator
 	traceIDEvaluator  *attributes.TraceIDEvaluator
@@ -53,7 +53,7 @@ type OTELFormatter struct {
 func NewOTELFormatter(
 	tracer trace.Tracer,
 	converter *timesync.Converter,
-	resolver *pseudo_reverse_dns.Resolver,
+	resolver *reversedns.Resolver,
 	metadataManager *procmeta.Manager,
 	customAttrs []config.CustomAttribute,
 	traceIDExpr string,

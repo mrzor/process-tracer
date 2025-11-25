@@ -22,7 +22,7 @@ import (
 	"github.com/mrzor/process-tracer/internal/otel"
 	"github.com/mrzor/process-tracer/internal/output"
 	"github.com/mrzor/process-tracer/internal/procmeta"
-	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
+	"github.com/mrzor/process-tracer/internal/reversedns"
 	"github.com/mrzor/process-tracer/internal/timesync"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -86,13 +86,17 @@ func setupBPF() (*bpfloader.Loader, *ringbuf.Reader, func(), error) {
 	}
 
 	if err := loader.Attach(); err != nil {
-		_ = loader.Close()
+		if closeErr := loader.Close(); closeErr != nil {
+			log.Printf("Error closing loader after attach failure: %v", closeErr)
+		}
 		return nil, nil, nil, err
 	}
 
 	rd, err := loader.OpenRingBuffer()
 	if err != nil {
-		_ = loader.Close()
+		if closeErr := loader.Close(); closeErr != nil {
+			log.Printf("Error closing loader after ring buffer open failure: %v", closeErr)
+		}
 		return nil, nil, nil, err
 	}
 
@@ -116,7 +120,7 @@ func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader
 	}
 
 	metadataManager := procmeta.NewManager()
-	resolver := pseudo_reverse_dns.New()
+	resolver := reversedns.New()
 
 	formatter, err := output.NewOTELFormatter(
 		tracer,

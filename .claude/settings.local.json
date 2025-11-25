@@ -33,7 +33,8 @@
       "Bash(find:*)",
       "Bash(dmesg:*)",
       "Bash(scc:*)",
-      "Bash(go fmt:*)"
+      "Bash(go fmt:*)",
+      "Bash(golangci-lint run:*)"
     ],
     "deny": [],
     "ask": []

@@ -6,7 +6,7 @@ import (
 	"github.com/mrzor/process-tracer/internal/bpf"
 	"github.com/mrzor/process-tracer/internal/envreassembler"
 	"github.com/mrzor/process-tracer/internal/procmeta"
-	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
+	"github.com/mrzor/process-tracer/internal/reversedns"
 )
 
 // EventHandler is the interface for handling BPF events from the ring buffer.
@@ -34,7 +34,7 @@ type Processor struct {
 	chunkReassembler     *envreassembler.ChunkReassembler
 	streamingReassembler *envreassembler.StreamingReassembler
 	metadataManager      *procmeta.Manager
-	resolver             *pseudo_reverse_dns.Resolver
+	resolver             *reversedns.Resolver
 	processHandler       ProcessEventHandler
 	tcpHandler           TCPEventHandler
 }
@@ -42,7 +42,7 @@ type Processor struct {
 // NewProcessor creates a new event processor.
 func NewProcessor(
 	metadataManager *procmeta.Manager,
-	resolver *pseudo_reverse_dns.Resolver,
+	resolver *reversedns.Resolver,
 	processHandler ProcessEventHandler,
 	tcpHandler TCPEventHandler,
 ) *Processor {

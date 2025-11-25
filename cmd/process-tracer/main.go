@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cilium/ebpf/ringbuf"
 	"github.com/mrzor/process-tracer/internal/bpfloader"
 	"github.com/mrzor/process-tracer/internal/config"
 	"github.com/mrzor/process-tracer/internal/eventprocessor"
@@ -23,6 +24,7 @@ import (
 	"github.com/mrzor/process-tracer/internal/procmeta"
 	"github.com/mrzor/process-tracer/internal/pseudo_reverse_dns"
 	"github.com/mrzor/process-tracer/internal/timesync"
+	"go.opentelemetry.io/otel/trace"
 )
 
 //go:embed LICENSE
@@ -50,79 +52,72 @@ func getTCPFinTimeout() int {
 	return timeout
 }
 
-func run() error {
-	// Parse command line arguments
-	cfg, err := config.ParseArgs(os.Args, licenseText)
-	if err != nil {
-		return err
-	}
-
+// setupOTEL initializes the OTEL provider and returns a tracer and cleanup function.
+func setupOTEL(cfg *config.Config) (trace.Tracer, func(), error) {
 	// Parse OTEL configuration from environment
 	otelCfg, err := config.ParseOTELConfig()
 	if err != nil {
-		return fmt.Errorf("failed to parse OTEL config: %w", err)
+		return nil, nil, fmt.Errorf("failed to parse OTEL config: %w", err)
 	}
 
 	// Initialize OTEL provider and establish connection
-	// This MUST succeed before we proceed - abort on failure
-	// Sends a test span with the trace ID to verify end-to-end connectivity
 	tp, err := otel.InitProvider(otelCfg, cfg.TraceID)
 	if err != nil {
-		return fmt.Errorf("ABORT: failed to initialize OTEL provider: %w", err)
+		return nil, nil, fmt.Errorf("ABORT: failed to initialize OTEL provider: %w", err)
 	}
-	defer func() {
+
+	cleanup := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := otel.ShutdownProvider(tp, shutdownCtx); err != nil {
 			log.Printf("Error shutting down OTEL provider: %v", err)
 		}
-	}()
+	}
 
-	// Create tracer
-	tracer := tp.Tracer("process-tracer")
+	return tp.Tracer("process-tracer"), cleanup, nil
+}
 
-	// Load BPF program
+// setupBPF loads the BPF program, attaches tracepoints, and opens ring buffer.
+// Returns loader, ring buffer reader, and cleanup function.
+func setupBPF() (*bpfloader.Loader, *ringbuf.Reader, func(), error) {
 	loader, err := bpfloader.New()
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
-	defer func() {
-		if err := loader.Close(); err != nil {
-			log.Printf("Error closing loader: %v", err)
-		}
-	}()
 
-	// Attach tracepoints
 	if err := loader.Attach(); err != nil {
-		return err
+		_ = loader.Close()
+		return nil, nil, nil, err
 	}
 
-	// Open ring buffer reader
 	rd, err := loader.OpenRingBuffer()
 	if err != nil {
-		return err
+		_ = loader.Close()
+		return nil, nil, nil, err
 	}
-	defer func() {
+
+	cleanup := func() {
 		if err := rd.Close(); err != nil {
 			log.Printf("Error closing ring buffer: %v", err)
 		}
-	}()
-
-	// Initialize components following the new architecture
-
-	// 1. Create time converter (pure utility)
-	converter, err := timesync.NewConverter()
-	if err != nil {
-		return fmt.Errorf("failed to create time converter: %w", err)
+		if err := loader.Close(); err != nil {
+			log.Printf("Error closing loader: %v", err)
+		}
 	}
 
-	// 2. Create process metadata manager (lifecycle management)
-	metadataManager := procmeta.NewManager()
+	return loader, rd, cleanup, nil
+}
 
-	// 3. Initialize pseudo reverse DNS resolver (enrichment)
+// setupComponents initializes all tracing components and returns the event stream.
+func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader) (*eventstream.Stream, error) {
+	converter, err := timesync.NewConverter()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create time converter: %w", err)
+	}
+
+	metadataManager := procmeta.NewManager()
 	resolver := pseudo_reverse_dns.New()
 
-	// 4. Create OTEL formatter (pure formatting layer)
 	formatter, err := output.NewOTELFormatter(
 		tracer,
 		converter,
@@ -133,39 +128,22 @@ func run() error {
 		cfg.ParentID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create OTEL formatter: %w", err)
+		return nil, fmt.Errorf("failed to create OTEL formatter: %w", err)
 	}
 
-	// 5. Create event processor (coordinates everything)
 	processor := eventprocessor.NewProcessor(
 		metadataManager,
 		resolver,
-		formatter, // ProcessEventHandler
-		formatter, // TCPEventHandler
+		formatter,
+		formatter,
 	)
 
-	// 6. Create event stream with processor
-	stream := eventstream.New(rd, processor)
+	return eventstream.New(rd, processor), nil
+}
 
-	// Create context for event stream
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Start event stream
-	if err := stream.Start(ctx); err != nil {
-		return err
-	}
-	defer func() {
-		if err := stream.Stop(); err != nil {
-			log.Printf("Error stopping stream: %v", err)
-		}
-	}()
-
-	// Handle signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	// Fork and exec the target command
+// executeCommand starts the target command and monitors it until completion.
+// Returns when the command exits or a signal is received.
+func executeCommand(cfg *config.Config, loader *bpfloader.Loader) error {
 	//nolint:gosec // This is a tracer tool - launching subprocesses is its purpose
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	cmd.Stdout = os.Stdout
@@ -190,6 +168,10 @@ func run() error {
 
 	fmt.Printf("Tracing process tree starting from PID %d...\n", childPid)
 
+	// Handle signals
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
 	// Monitor child process completion
 	childDone := make(chan error, 1)
 	go func() {
@@ -210,9 +192,12 @@ func run() error {
 		}
 	}
 
-	// Give ring buffer time to drain and catch late TCP CLOSE events
-	// TCP connections may linger in FIN_WAIT or TIME_WAIT states before transitioning to CLOSE
-	// We use a fraction of tcp_fin_timeout as our drain period
+	return nil
+}
+
+// calculateDrainTimeout computes the timeout for draining late TCP events.
+// Uses a fraction of tcp_fin_timeout with bounds of 500ms to 2s.
+func calculateDrainTimeout() time.Duration {
 	tcpFinTimeout := getTCPFinTimeout()
 	// Use 1% of tcp_fin_timeout with a minimum of 500ms and maximum of 2s
 	drainTimeout := time.Duration(tcpFinTimeout*10) * time.Millisecond
@@ -222,8 +207,56 @@ func run() error {
 	if drainTimeout > 2*time.Second {
 		drainTimeout = 2 * time.Second
 	}
+	return drainTimeout
+}
 
-	time.Sleep(drainTimeout)
+func run() error {
+	// Parse command line arguments
+	cfg, err := config.ParseArgs(os.Args, licenseText)
+	if err != nil {
+		return err
+	}
+
+	// Initialize OTEL provider
+	tracer, cleanupOTEL, err := setupOTEL(cfg)
+	if err != nil {
+		return err
+	}
+	defer cleanupOTEL()
+
+	// Load BPF program and open ring buffer
+	loader, rd, cleanupBPF, err := setupBPF()
+	if err != nil {
+		return err
+	}
+	defer cleanupBPF()
+
+	// Initialize components and create event stream
+	stream, err := setupComponents(cfg, tracer, rd)
+	if err != nil {
+		return err
+	}
+
+	// Start event stream
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := stream.Start(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		if err := stream.Stop(); err != nil {
+			log.Printf("Error stopping stream: %v", err)
+		}
+	}()
+
+	// Execute target command and wait for completion
+	if err := executeCommand(cfg, loader); err != nil {
+		return err
+	}
+
+	// Give ring buffer time to drain and catch late TCP CLOSE events
+	time.Sleep(calculateDrainTimeout())
 
 	return nil
 }

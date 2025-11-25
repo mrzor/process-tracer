@@ -44,6 +44,7 @@ jobs:
 
       - name: Build latest libbpf from source
         run: |
+          cd /tmp
           git clone https://github.com/libbpf/libbpf.git
           cd libbpf/src
           make -j $(nproc)
@@ -52,6 +53,7 @@ jobs:
 
       - name: Build latest bpftool from source
         run: |
+          cd /tmp
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
           make -j $(nproc)

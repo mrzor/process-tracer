@@ -12,7 +12,6 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
       - arm64
@@ -59,6 +58,6 @@ release:
   header: |
     ## Release {{ .Tag }}
 
-    Binary releases for Linux (x86_64, ARM64) and macOS (ARM64).
+    Binary releases for Linux (x86_64, ARM64).
   footer: |
     **Full Changelog**: {{ .ReleaseURL }}/compare/{{ .PreviousTag }}...{{ .Tag }}

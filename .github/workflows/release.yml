@@ -9,17 +9,23 @@ permissions:
   contents: write
 
 jobs:
-  goreleaser:
-    name: Release with goreleaser
-    runs-on: ubuntu-latest
+  build:
+    name: Build for ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            goarch: amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            goarch: arm64
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
-      - name: Fetch all tags
-        run: git fetch --force --tags
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -64,13 +70,101 @@ jobs:
           sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
 
       - name: Generate BPF bindings
-        run: go generate ./internal/bpf
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+        working-directory: internal/bpf
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOPACKAGE: bpf
+        run: |
+          go run github.com/cilium/ebpf/cmd/bpf2go -target ${{ matrix.arch }} processTracer ./process_tracer.bpf.c -- -I. -I/usr/include
+
+      - name: Build binary
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          go build -ldflags "\
+            -s -w \
+            -X main.version=${VERSION} \
+            -X main.commit=${COMMIT} \
+            -X main.date=${DATE}" \
+            -o process-tracer \
+            ./cmd/process-tracer
+
+      - name: Create tarball
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          TARBALL="process-tracer_${VERSION}_linux_${{ matrix.arch }}.tar.gz"
+          tar -czf ${TARBALL} process-tracer LICENSE README.md
+          sha256sum ${TARBALL} > ${TARBALL}.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.arch }}
+          path: |
+            process-tracer_*.tar.gz
+            process-tracer_*.tar.gz.sha256
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Create checksums file
+        run: |
+          cat *.sha256 > checksums.txt
+          rm *.sha256
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          PREV_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || echo "")
+
+          echo "## Release ${VERSION}" > release_notes.md
+          echo "" >> release_notes.md
+          echo "Binary releases for Linux (x86_64, ARM64)." >> release_notes.md
+          echo "" >> release_notes.md
+
+          if [ -n "$PREV_TAG" ]; then
+            echo "### Changes" >> release_notes.md
+            git log ${PREV_TAG}..${VERSION} --pretty=format:"- %s" \
+              --grep="^feat" --grep="^fix" --grep="^perf" \
+              | grep -v "^- chore:" | grep -v "^- docs:" | grep -v "^- test:" >> release_notes.md || true
+            echo "" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${VERSION}" >> release_notes.md
+          fi
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+
+          # Check if this is a prerelease
+          PRERELEASE=""
+          if [[ "$VERSION" =~ -(alpha|beta|rc) ]]; then
+            PRERELEASE="--prerelease"
+          fi
+
+          gh release create ${VERSION} \
+            ${PRERELEASE} \
+            --title "Release ${VERSION}" \
+            --notes-file release_notes.md \
+            process-tracer_*.tar.gz \
+            checksums.txt

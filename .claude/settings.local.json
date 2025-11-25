@@ -38,7 +38,8 @@
       "Bash(git -C /home/zor/Perso/process-tracer log --oneline --all \"--grep=version\\|ldflags\\|Version\")",
       "Bash(mise test:*)",
       "Bash(mise lint:*)",
-      "Bash(mise tasks:*)"
+      "Bash(mise tasks:*)",
+      "Bash(goreleaser build:*)"
     ],
     "deny": [],
     "ask": []

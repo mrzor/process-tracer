@@ -62,7 +62,11 @@ jobs:
           sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
 
       - name: Generate BPF bindings
-        run: go generate ./internal/bpf
+        working-directory: internal/bpf
+        env:
+          GOPACKAGE: bpf
+        run: |
+          go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 processTracer ./process_tracer.bpf.c -- -I. -I/usr/include
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v8
@@ -121,7 +125,11 @@ jobs:
           sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
 
       - name: Generate BPF bindings
-        run: go generate ./internal/bpf
+        working-directory: internal/bpf
+        env:
+          GOPACKAGE: bpf
+        run: |
+          go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 processTracer ./process_tracer.bpf.c -- -I. -I/usr/include
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out ./...

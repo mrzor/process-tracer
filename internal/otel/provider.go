@@ -50,7 +50,7 @@ func verifyConnection(_ context.Context, endpoint string) error {
 //
 // Note: Uses OTLP/HTTP protocol. The HTTP client automatically honors HTTP_PROXY,
 // HTTPS_PROXY, and NO_PROXY environment variables through Go's standard net/http transport.
-func InitProvider(cfg *config.OTELConfig, _ string) (*sdktrace.TracerProvider, error) {
+func InitProvider(cfg *config.OTELConfig, versionInfo string) (*sdktrace.TracerProvider, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -86,6 +86,15 @@ func InitProvider(cfg *config.OTELConfig, _ string) (*sdktrace.TracerProvider, e
 	// Build resource attributes
 	resourceAttrs := []resource.Option{
 		resource.WithAttributes(semconv.ServiceName(cfg.ServiceName)),
+	}
+
+	// Add service version if available
+	if versionInfo != "" && versionInfo != "dev" {
+		resourceAttrs = append(resourceAttrs,
+			resource.WithAttributes(
+				semconv.ServiceVersion(versionInfo),
+			),
+		)
 	}
 
 	// Add custom resource attributes from environment

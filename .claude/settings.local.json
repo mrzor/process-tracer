@@ -34,7 +34,8 @@
       "Bash(dmesg:*)",
       "Bash(scc:*)",
       "Bash(go fmt:*)",
-      "Bash(golangci-lint run:*)"
+      "Bash(golangci-lint run:*)",
+      "Bash(git -C /home/zor/Perso/process-tracer log --oneline --all \"--grep=version\\|ldflags\\|Version\")"
     ],
     "deny": [],
     "ask": []

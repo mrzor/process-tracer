@@ -30,6 +30,13 @@ import (
 //go:embed LICENSE
 var licenseText string
 
+// Version information injected by GoReleaser at build time
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("Error: %v", err)
@@ -53,7 +60,7 @@ func getTCPFinTimeout() int {
 }
 
 // setupOTEL initializes the OTEL provider and returns a tracer and cleanup function.
-func setupOTEL(cfg *config.Config) (trace.Tracer, func(), error) {
+func setupOTEL(cfg *config.Config, versionInfo string) (trace.Tracer, func(), error) {
 	// Parse OTEL configuration from environment
 	otelCfg, err := config.ParseOTELConfig()
 	if err != nil {
@@ -61,7 +68,7 @@ func setupOTEL(cfg *config.Config) (trace.Tracer, func(), error) {
 	}
 
 	// Initialize OTEL provider and establish connection
-	tp, err := otel.InitProvider(otelCfg, cfg.TraceID)
+	tp, err := otel.InitProvider(otelCfg, versionInfo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("ABORT: failed to initialize OTEL provider: %w", err)
 	}
@@ -216,13 +223,17 @@ func calculateDrainTimeout() time.Duration {
 
 func run() error {
 	// Parse command line arguments
-	cfg, err := config.ParseArgs(os.Args, licenseText)
+	cfg, err := config.ParseArgs(os.Args, licenseText, version, commit, date)
 	if err != nil {
 		return err
 	}
 
+	// Log version information
+	log.Printf("Starting process-tracer %s (commit: %s, built: %s)", version, commit, date)
+
 	// Initialize OTEL provider
-	tracer, cleanupOTEL, err := setupOTEL(cfg)
+	versionInfo := fmt.Sprintf("%s (%s)", version, commit)
+	tracer, cleanupOTEL, err := setupOTEL(cfg, versionInfo)
 	if err != nil {
 		return err
 	}

@@ -38,7 +38,8 @@ type Config struct {
 // ParseArgs parses command-line arguments using urfave/cli and returns a Config.
 // Expected format: program_name [--trace-id <id>] [--parent-id <id>] [-a name=expr]... -- <command> [args...].
 // licenseText is displayed when --license flag is used.
-func ParseArgs(args []string, licenseText string) (*Config, error) {
+// version, commit, and buildDate are build-time injected values displayed with --version.
+func ParseArgs(args []string, licenseText string, version, commit, buildDate string) (*Config, error) {
 	var traceID string
 	var parentID string
 	var customAttrs []CustomAttribute
@@ -55,7 +56,7 @@ func ParseArgs(args []string, licenseText string) (*Config, error) {
 			"   process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- ls -la\n" +
 			"   process-tracer -a env_name='env[\"ENVIRONMENT\"]' -- command args\n" +
 			"   process-tracer -a foo='env[\"FOO\"]' -a bar='args[0]' -- cmd",
-		Version: "dev",
+		Version: formatVersionString(version, commit, buildDate),
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
 				Name:  "license",
@@ -173,4 +174,12 @@ func generateTraceID() (string, error) {
 // FullCommand returns the command and all its arguments as a slice.
 func (c *Config) FullCommand() []string {
 	return append([]string{c.Command}, c.Args...)
+}
+
+// formatVersionString constructs a formatted version string from components.
+func formatVersionString(version, commit, date string) string {
+	if version == "" || version == "dev" {
+		return "dev"
+	}
+	return fmt.Sprintf("%s (commit: %s, date: %s)", version, commit, date)
 }

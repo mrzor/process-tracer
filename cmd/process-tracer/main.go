@@ -30,7 +30,7 @@ import (
 //go:embed LICENSE
 var licenseText string
 
-// Version information injected by GoReleaser at build time
+// Version information injected by GoReleaser at build time.
 var (
 	version = "dev"
 	commit  = "unknown"
@@ -60,7 +60,7 @@ func getTCPFinTimeout() int {
 }
 
 // setupOTEL initializes the OTEL provider and returns a tracer and cleanup function.
-func setupOTEL(cfg *config.Config, versionInfo string) (trace.Tracer, func(), error) {
+func setupOTEL(versionInfo string) (trace.Tracer, func(), error) {
 	// Parse OTEL configuration from environment
 	otelCfg, err := config.ParseOTELConfig()
 	if err != nil {
@@ -233,7 +233,7 @@ func run() error {
 
 	// Initialize OTEL provider
 	versionInfo := fmt.Sprintf("%s (%s)", version, commit)
-	tracer, cleanupOTEL, err := setupOTEL(cfg, versionInfo)
+	tracer, cleanupOTEL, err := setupOTEL(versionInfo)
 	if err != nil {
 		return err
 	}

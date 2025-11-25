@@ -35,7 +35,10 @@
       "Bash(scc:*)",
       "Bash(go fmt:*)",
       "Bash(golangci-lint run:*)",
-      "Bash(git -C /home/zor/Perso/process-tracer log --oneline --all \"--grep=version\\|ldflags\\|Version\")"
+      "Bash(git -C /home/zor/Perso/process-tracer log --oneline --all \"--grep=version\\|ldflags\\|Version\")",
+      "Bash(mise test:*)",
+      "Bash(mise lint:*)",
+      "Bash(mise tasks:*)"
     ],
     "deny": [],
     "ask": []

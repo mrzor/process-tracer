@@ -13,7 +13,7 @@ const testLicenseText = "Test License Text"
 
 func TestParseArgs_BasicCommand(t *testing.T) {
 	args := []string{"process-tracer", "--", "echo", "hello"}
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 
 	require.NoError(t, err)
 	assert.Equal(t, "echo", cfg.Command)
@@ -25,7 +25,7 @@ func TestParseArgs_BasicCommand(t *testing.T) {
 func TestParseArgs_WithTraceID(t *testing.T) {
 	args := []string{"process-tracer", "--trace-id", testTraceID, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, testTraceID, cfg.TraceID)
 	assert.Equal(t, "ls", cfg.Command)
@@ -34,7 +34,7 @@ func TestParseArgs_WithTraceID(t *testing.T) {
 func TestParseArgs_WithTraceIDShortForm(t *testing.T) {
 	args := []string{"process-tracer", "-t", testTraceID, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, testTraceID, cfg.TraceID)
 }
@@ -44,7 +44,7 @@ func TestParseArgs_TraceIDAsExpression(t *testing.T) {
 	traceIDExpr := `env["TRACE_ID"]`
 	args := []string{"process-tracer", "-t", traceIDExpr, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, traceIDExpr, cfg.TraceID)
 }
@@ -54,7 +54,7 @@ func TestParseArgs_TraceIDAsLiteralHex(t *testing.T) {
 	traceID := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 	args := []string{"process-tracer", "-t", traceID, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, traceID, cfg.TraceID)
 }
@@ -64,7 +64,7 @@ func TestParseArgs_TraceIDShortString(t *testing.T) {
 	shortID := "abc123"
 	args := []string{"process-tracer", "-t", shortID, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, shortID, cfg.TraceID)
 }
@@ -72,7 +72,7 @@ func TestParseArgs_TraceIDShortString(t *testing.T) {
 func TestParseArgs_WithParentID(t *testing.T) {
 	args := []string{"process-tracer", "--parent-id", testParentID, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, testParentID, cfg.ParentID)
 	assert.Equal(t, "ls", cfg.Command)
@@ -81,7 +81,7 @@ func TestParseArgs_WithParentID(t *testing.T) {
 func TestParseArgs_WithParentIDShortForm(t *testing.T) {
 	args := []string{"process-tracer", "-p", testParentID, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, testParentID, cfg.ParentID)
 }
@@ -90,7 +90,7 @@ func TestParseArgs_ParentIDAsExpression(t *testing.T) {
 	parentIDExpr := `env["PARENT_SPAN_ID"]`
 	args := []string{"process-tracer", "-p", parentIDExpr, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, parentIDExpr, cfg.ParentID)
 }
@@ -98,7 +98,7 @@ func TestParseArgs_ParentIDAsExpression(t *testing.T) {
 func TestParseArgs_WithTraceIDAndParentID(t *testing.T) {
 	args := []string{"process-tracer", "-t", testTraceID, "-p", testParentID, "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, testTraceID, cfg.TraceID)
 	assert.Equal(t, testParentID, cfg.ParentID)
@@ -107,7 +107,7 @@ func TestParseArgs_WithTraceIDAndParentID(t *testing.T) {
 func TestParseArgs_SingleCustomAttribute(t *testing.T) {
 	args := []string{"process-tracer", "-a", "foo=bar", "--", "echo", "test"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	require.Len(t, cfg.CustomAttributes, 1)
 	assert.Equal(t, "foo", cfg.CustomAttributes[0].Name)
@@ -122,7 +122,7 @@ func TestParseArgs_MultipleCustomAttributes(t *testing.T) {
 		"--", "bash", "-c", "echo hello",
 	}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	require.Len(t, cfg.CustomAttributes, 2)
 	assert.Equal(t, "env_name", cfg.CustomAttributes[0].Name)
@@ -134,7 +134,7 @@ func TestParseArgs_MultipleCustomAttributes(t *testing.T) {
 func TestParseArgs_CustomAttributeLongForm(t *testing.T) {
 	args := []string{"process-tracer", "--attribute", "test=value", "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	require.Len(t, cfg.CustomAttributes, 1)
 	assert.Equal(t, "test", cfg.CustomAttributes[0].Name)
@@ -144,7 +144,7 @@ func TestParseArgs_CustomAttributeWithEquals(t *testing.T) {
 	// Expression contains '=' characters
 	args := []string{"process-tracer", "-a", "check=foo==\"bar\"", "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	require.Len(t, cfg.CustomAttributes, 1)
 	assert.Equal(t, "check", cfg.CustomAttributes[0].Name)
@@ -154,7 +154,7 @@ func TestParseArgs_CustomAttributeWithEquals(t *testing.T) {
 func TestParseArgs_CustomAttributeInvalidFormat(t *testing.T) {
 	args := []string{"process-tracer", "-a", "invalid_no_equals", "--", "ls"}
 
-	_, err := ParseArgs(args, testLicenseText)
+	_, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid attribute format")
 	assert.Contains(t, err.Error(), "NAME=EXPR")
@@ -163,7 +163,7 @@ func TestParseArgs_CustomAttributeInvalidFormat(t *testing.T) {
 func TestParseArgs_CustomAttributeEmptyName(t *testing.T) {
 	args := []string{"process-tracer", "-a", "=value", "--", "ls"}
 
-	_, err := ParseArgs(args, testLicenseText)
+	_, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "name cannot be empty")
 }
@@ -171,7 +171,7 @@ func TestParseArgs_CustomAttributeEmptyName(t *testing.T) {
 func TestParseArgs_CustomAttributeEmptyExpression(t *testing.T) {
 	args := []string{"process-tracer", "-a", "name=", "--", "ls"}
 
-	_, err := ParseArgs(args, testLicenseText)
+	_, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expression cannot be empty")
 }
@@ -179,7 +179,7 @@ func TestParseArgs_CustomAttributeEmptyExpression(t *testing.T) {
 func TestParseArgs_MissingCommand(t *testing.T) {
 	args := []string{"process-tracer", "--"}
 
-	_, err := ParseArgs(args, testLicenseText)
+	_, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no command specified")
 }
@@ -187,7 +187,7 @@ func TestParseArgs_MissingCommand(t *testing.T) {
 func TestParseArgs_MissingSeparator(t *testing.T) {
 	args := []string{"process-tracer"}
 
-	_, err := ParseArgs(args, testLicenseText)
+	_, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no command specified")
 }
@@ -198,7 +198,7 @@ func TestParseArgs_CommandWithMultipleArgs(t *testing.T) {
 		"--", "bash", "-c", "echo hello world",
 	}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "bash", cfg.Command)
 	assert.Equal(t, []string{"-c", "echo hello world"}, cfg.Args)
@@ -215,7 +215,7 @@ func TestParseArgs_ComplexScenario(t *testing.T) {
 		"--", "docker", "run", "-it", "ubuntu", "bash",
 	}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, traceID, cfg.TraceID)
 	assert.Equal(t, "docker", cfg.Command)
@@ -233,7 +233,7 @@ func TestParseArgs_ComplexScenario(t *testing.T) {
 func TestParseArgs_FullCommand(t *testing.T) {
 	args := []string{"process-tracer", "--", "echo", "hello", "world"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 
 	fullCmd := cfg.FullCommand()
@@ -243,7 +243,7 @@ func TestParseArgs_FullCommand(t *testing.T) {
 func TestParseArgs_DottedAttributeName(t *testing.T) {
 	args := []string{"process-tracer", "-a", "extra.attribute.name=env[\"VAR\"]", "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	require.Len(t, cfg.CustomAttributes, 1)
 	assert.Equal(t, "extra.attribute.name", cfg.CustomAttributes[0].Name)
@@ -253,7 +253,7 @@ func TestParseArgs_WhitespaceInAttribute(t *testing.T) {
 	// Test that whitespace around = is trimmed
 	args := []string{"process-tracer", "-a", "  name  =  value  ", "--", "ls"}
 
-	cfg, err := ParseArgs(args, testLicenseText)
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "name", cfg.CustomAttributes[0].Name)
 	assert.Equal(t, "value", cfg.CustomAttributes[0].Expression)

@@ -13,7 +13,6 @@ const testParentID = "0123456789abcdef"
 const testTraceID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 const testLicenseText = "Test License Text"
 
-
 func TestParseArgs_BasicCommand(t *testing.T) {
 
 	args := []string{"process-tracer", "--", "echo", "hello"}
@@ -427,7 +426,7 @@ func TestParseSymlinkMode_NoAttributes(t *testing.T) {
 	cfg, err := parseSymlinkMode([]string{"sh", "ls", "-la"}, envCfg)
 	require.NoError(t, err)
 	// Command should be resolved sh binary
-	assert.True(t, strings.Contains(cfg.Command, "sh"))
+	assert.Contains(t, cfg.Command, "sh")
 	assert.True(t, isExecutable(cfg.Command))
 	// Args are everything after symlink name
 	assert.Equal(t, []string{"ls", "-la"}, cfg.Args)
@@ -574,7 +573,7 @@ func TestResolveShellBinary_PathLookup(t *testing.T) {
 	resolved, err := resolveShellBinary("sh", "")
 	require.NoError(t, err)
 	assert.NotEmpty(t, resolved)
-	assert.True(t, strings.Contains(resolved, "sh"))
+	assert.Contains(t, resolved, "sh")
 
 	// Verify it's executable
 	assert.True(t, isExecutable(resolved))
@@ -584,9 +583,9 @@ func TestResolveShellBinary_CommonLocations(t *testing.T) {
 	// If sh isn't in PATH, it should still find it in /bin
 	// Temporarily clear PATH to force common location fallback
 	oldPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", oldPath)
+	defer func() { require.NoError(t, os.Setenv("PATH", oldPath)) }()
 
-	os.Setenv("PATH", "")
+	require.NoError(t, os.Setenv("PATH", ""))
 
 	resolved, err := resolveShellBinary("sh", "")
 	require.NoError(t, err)
@@ -612,7 +611,7 @@ func TestParseSymlinkMode_ShellResolution(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should resolve to actual sh binary
-	assert.True(t, strings.Contains(cfg.Command, "sh"))
+	assert.Contains(t, cfg.Command, "sh")
 	assert.True(t, isExecutable(cfg.Command))
 
 	// Args should be passed through
@@ -641,7 +640,6 @@ func TestParseSymlinkMode_ShellResolution_NoArgs(t *testing.T) {
 	cfg, err := parseSymlinkMode([]string{"/usr/bin/sh"}, envCfg)
 	require.NoError(t, err)
 
-	assert.True(t, strings.Contains(cfg.Command, "sh"))
+	assert.Contains(t, cfg.Command, "sh")
 	assert.Empty(t, cfg.Args)
 }
-

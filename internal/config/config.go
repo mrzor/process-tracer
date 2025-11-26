@@ -57,14 +57,14 @@ func ParseEnvConfig() (*EnvConfig, error) {
 }
 
 // ParseAttributeString parses semicolon-separated NAME=EXPR pairs.
-// Format: "name1=expr1;name2=expr2;name3=expr3"
+// Format: "name1=expr1;name2=expr2;name3=expr3".
 func ParseAttributeString(attrStr string) ([]CustomAttribute, error) {
 	if attrStr == "" {
 		return nil, nil
 	}
 
-	var attrs []CustomAttribute
 	pairs := strings.Split(attrStr, ";")
+	attrs := make([]CustomAttribute, 0, len(pairs))
 
 	for _, pair := range pairs {
 		pair = strings.TrimSpace(pair)

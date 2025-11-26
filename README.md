@@ -67,6 +67,35 @@ sudo mise setcap
 ./process-tracer --help
 ```
 
+<!-- *AI SLOP* -->
+
+## Environment Variable Configuration
+
+All CLI flags have environment variable equivalents. CLI flags override environment variables.
+
+```bash
+export PROCESS_TRACER_TRACE_ID='env["BUILD_ID"]'
+export PROCESS_TRACER_PARENT_ID='env["PARENT_SPAN"]'
+export PROCESS_TRACER_ATTRIBUTES='env=prod;region=us-east'
+./process-tracer -- command ...
+```
+
+## Shell Mode
+
+Symlink process-tracer as a shell for transparent wrapping:
+
+```bash
+ln -s process-tracer bash
+export PROCESS_TRACER_TRACE_ID='trace123'
+./bash -c 'npm test'  # All args pass through, no -- needed
+```
+
+Shell resolution: `bash` → `/bin/bash`, `sh` → `/bin/sh`, `zsh` → `/bin/zsh`
+
+Override: `export PROCESS_TRACER_SHELL_BINARY=/path/to/shell`
+
+<!-- */AI SLOP* -->
+
 ## Expressions
 
 The `-a` flag accepts any valid [expr](https://expr-lang.org/) expression.

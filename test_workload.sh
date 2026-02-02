@@ -1,4 +1,4 @@
-a#!/bin/bash
+#!/bin/bash
 # Complex workload script to test eBPF tracer
 # Demonstrates parallel execution, sequential operations, and various network activities
 

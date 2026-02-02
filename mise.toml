@@ -1,4 +1,5 @@
 [tools]
+"github:ymtdzzz/otel-tui" = "latest"
 go = "1.25"
 golangci-lint = "2"
 lefthook = "latest"
@@ -12,7 +13,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT = "localhost:8080"
 
 [tasks.go-generate]
 description = "Generate BPF Go bindings using bpf2go"
-run = "go generate ./internal/bpf"
+run = "./scripts/generate-bpf.sh"
 
 [tasks.go-build]
 description = "Build Go process-tracer binary"

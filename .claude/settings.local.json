@@ -39,7 +39,8 @@
       "Bash(mise test:*)",
       "Bash(mise lint:*)",
       "Bash(mise tasks:*)",
-      "Bash(goreleaser build:*)"
+      "Bash(goreleaser build:*)",
+      "Bash(mise go-generate:*)"
     ],
     "deny": [],
     "ask": []

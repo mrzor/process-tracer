@@ -3,6 +3,7 @@ package timesync
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -20,6 +21,8 @@ type Converter struct {
 func NewConverter() (*Converter, error) {
 	bootTime, err := getSystemBootTime()
 	if err != nil {
+		log.Printf("WARN: falling back to estimated timestamps, cause: %v", err)
+
 		// Fallback: estimate boot time from current time - uptime
 		// This is less accurate but allows the tracer to continue
 		bootTime = time.Now().Add(-time.Hour) // Conservative fallback

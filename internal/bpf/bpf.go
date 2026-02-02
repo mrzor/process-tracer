@@ -7,7 +7,7 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64 processTracer ./process_tracer.bpf.c -- -I. -I/usr/include
+//go:generate ../../scripts/generate-bpf.sh
 
 // Event type constants matching kernel/C conventions.
 //

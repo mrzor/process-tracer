@@ -67,6 +67,14 @@ sudo mise setcap
 ./process-tracer --help
 ```
 
+## Running a quick demo / testbed
+
+A little shellscript is provided as a sample workload.
+- Assuming you got the `mise` setup fully done, and you have a build (either downloaded, or built on your own)
+- `otel-tui --http 8080` in a dedicated terminal
+- `./process-tracer -- ./sample-workload.sh`
+- In OTel TUI, navigate to the single trace you should be able to see the produced spans as well as their attributes. 
+
 <!-- *AI SLOP* -->
 
 ## Environment Variable Configuration
@@ -112,7 +120,10 @@ not an expression.
 ## Development
 
 - Use [mise](https://github.com/jdx/mise)
+- You will need extra system packages, like `clang`, `llvm` and `bpftools`
 - `mise trust && mise install`
+- `bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h`
+- `mise go-generate` (Repeat this step whenever `process_tracer.bpf.c` changes)
 - `mise go-build && mise setcap`
 
 # Contributing
@@ -128,7 +139,7 @@ not an expression.
   - Then vibe-code fix
 
 - Applied software engineering to diminish the amount of vibe-coded nonsense is WELCOMED
-  - PREFER: pure functions, immutability, command-query separation and state machines
+  - PREFER: pure functions, immutability, documented small-scoped packages, command-query separation and state machines
   - AVOID: mixing concerns, big packages
 
 ## Requirements

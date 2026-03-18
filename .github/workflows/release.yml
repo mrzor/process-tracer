@@ -30,7 +30,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.25'
+          go-version: '1.26'
 
       - name: Install base dependencies
         run: |
@@ -46,14 +46,14 @@ jobs:
             libcap-dev \
             libzstd-dev \
             zlib1g-dev \
-            linux-headers-$(uname -r)
+            "linux-headers-$(uname -r)"
 
       - name: Build latest libbpf from source
         run: |
           cd /tmp
           git clone https://github.com/libbpf/libbpf.git
           cd libbpf/src
-          make -j $(nproc)
+          make -j "$(nproc)"
           sudo make install
           sudo ldconfig
 
@@ -62,12 +62,12 @@ jobs:
           cd /tmp
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
-          make -j $(nproc)
+          make -j "$(nproc)"
           sudo make install
 
       - name: Generate vmlinux.h
         run: |
-          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
+          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c | tee internal/bpf/vmlinux.h > /dev/null
 
       - name: Generate BPF bindings
         working-directory: internal/bpf
@@ -98,8 +98,8 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           TARBALL="process-tracer_${VERSION}_linux_${{ matrix.arch }}.tar.gz"
-          tar -czf ${TARBALL} process-tracer LICENSE README.md
-          sha256sum ${TARBALL} > ${TARBALL}.sha256
+          tar -czf "${TARBALL}" process-tracer LICENSE README.md
+          sha256sum "${TARBALL}" > "${TARBALL}.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -127,28 +127,32 @@ jobs:
 
       - name: Create checksums file
         run: |
-          cat *.sha256 > checksums.txt
-          rm *.sha256
+          cat ./*.sha256 > checksums.txt
+          rm ./*.sha256
 
       - name: Generate release notes
         id: notes
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
-          PREV_TAG=$(git describe --tags --abbrev=0 ${VERSION}^ 2>/dev/null || echo "")
+          PREV_TAG=$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || echo "")
 
-          echo "## Release ${VERSION}" > release_notes.md
-          echo "" >> release_notes.md
-          echo "Binary releases for Linux (x86_64, ARM64)." >> release_notes.md
-          echo "" >> release_notes.md
+          {
+            echo "## Release ${VERSION}"
+            echo ""
+            echo "Binary releases for Linux (x86_64, ARM64)."
+            echo ""
+          } > release_notes.md
 
           if [ -n "$PREV_TAG" ]; then
-            echo "### Changes" >> release_notes.md
-            git log ${PREV_TAG}..${VERSION} --pretty=format:"- %s" \
-              --grep="^feat" --grep="^fix" --grep="^perf" \
-              | grep -v "^- chore:" | grep -v "^- docs:" | grep -v "^- test:" >> release_notes.md || true
-            echo "" >> release_notes.md
-            echo "" >> release_notes.md
-            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${VERSION}" >> release_notes.md
+            {
+              echo "### Changes"
+              git log "${PREV_TAG}..${VERSION}" --pretty=format:"- %s" \
+                --grep="^feat" --grep="^fix" --grep="^perf" \
+                | grep -v "^- chore:" | grep -v "^- docs:" | grep -v "^- test:" || true
+              echo ""
+              echo ""
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...${VERSION}"
+            } >> release_notes.md
           fi
 
       - name: Create Release
@@ -163,7 +167,7 @@ jobs:
             PRERELEASE="--prerelease"
           fi
 
-          gh release create ${VERSION} \
+          gh release create "${VERSION}" \
             ${PRERELEASE} \
             --title "Release ${VERSION}" \
             --notes-file release_notes.md \

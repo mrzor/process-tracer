@@ -1,6 +1,6 @@
 [tools]
 "github:ymtdzzz/otel-tui" = "latest"
-go = "1.25"
+go = "1.26"
 golangci-lint = "2"
 lefthook = "latest"
 rust = "nightly"

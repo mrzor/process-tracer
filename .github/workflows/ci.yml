@@ -24,7 +24,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Install base dependencies
         run: |
@@ -40,13 +40,13 @@ jobs:
             libcap-dev \
             libzstd-dev \
             zlib1g-dev \
-            linux-headers-$(uname -r)
+            "linux-headers-$(uname -r)"
 
       - name: Build latest libbpf from source
         run: |
           git clone https://github.com/libbpf/libbpf.git
           cd libbpf/src
-          make -j $(nproc)
+          make -j "$(nproc)"
           sudo make install
           sudo ldconfig
 
@@ -54,12 +54,12 @@ jobs:
         run: |
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
-          make -j $(nproc)
+          make -j "$(nproc)"
           sudo make install
 
       - name: Generate vmlinux.h
         run: |
-          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
+          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c | tee internal/bpf/vmlinux.h > /dev/null
 
       - name: Generate BPF bindings
         working-directory: internal/bpf
@@ -87,7 +87,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26"
 
       - name: Install base dependencies
         run: |
@@ -103,13 +103,13 @@ jobs:
             libcap-dev \
             libzstd-dev \
             zlib1g-dev \
-            linux-headers-$(uname -r)
+            "linux-headers-$(uname -r)"
 
       - name: Build latest libbpf from source
         run: |
           git clone https://github.com/libbpf/libbpf.git
           cd libbpf/src
-          make -j $(nproc)
+          make -j "$(nproc)"
           sudo make install
           sudo ldconfig
 
@@ -117,12 +117,12 @@ jobs:
         run: |
           git clone --recurse-submodules https://github.com/libbpf/bpftool.git
           cd bpftool/src
-          make -j $(nproc)
+          make -j "$(nproc)"
           sudo make install
 
       - name: Generate vmlinux.h
         run: |
-          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > internal/bpf/vmlinux.h
+          sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c | tee internal/bpf/vmlinux.h > /dev/null
 
       - name: Generate BPF bindings
         working-directory: internal/bpf

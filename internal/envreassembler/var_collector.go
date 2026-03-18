@@ -121,7 +121,6 @@ func (s *StreamingReassembler) finalizeCollection(_ uint32, collector *VarCollec
 	// Filter out empty args (gaps in indices)
 	finalArgs := make([]string, 0, len(args))
 	for i, arg := range args {
-		//nolint:gosec // Bounds check ensures i fits in uint16
 		if i < 65536 && collector.argIndices[uint16(i)] {
 			finalArgs = append(finalArgs, arg)
 		}
@@ -133,7 +132,6 @@ func (s *StreamingReassembler) finalizeCollection(_ uint32, collector *VarCollec
 
 	// Parse environment variables and filter out gaps
 	for i, envStr := range envRaw {
-		//nolint:gosec // Bounds check ensures i fits in uint16
 		if i >= 65536 || !collector.envIndices[uint16(i)] {
 			continue // Skip gaps or out of bounds
 		}

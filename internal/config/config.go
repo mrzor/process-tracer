@@ -155,7 +155,7 @@ func detectSymlinkMode(mode string) (bool, error) {
 
 // isExecutable checks if a file exists and is executable.
 func isExecutable(path string) bool {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // Path from internal config resolution
 	if err != nil {
 		return false
 	}
@@ -187,7 +187,7 @@ func isSelfBinary(path string) (bool, error) {
 		return false, err
 	}
 
-	pathInfo, err := os.Stat(absPath)
+	pathInfo, err := os.Stat(absPath) //nolint:gosec // Path resolved via filepath.Abs
 	if err != nil {
 		return false, err
 	}

@@ -75,7 +75,7 @@ func (e *TraceIDEvaluator) EvaluateAndValidate(metadata *procmeta.ProcessMetadat
 
 	// Convert output to string
 	resultStr := fmt.Sprint(output)
-	var warnings []attribute.KeyValue
+	warnings := make([]attribute.KeyValue, 0, 2)
 
 	// Try to parse as valid trace ID (32 hex chars)
 	if len(resultStr) == 32 {
@@ -167,7 +167,7 @@ func (e *ParentIDEvaluator) EvaluateAndValidate(metadata *procmeta.ProcessMetada
 
 	// Convert output to string
 	resultStr := fmt.Sprint(output)
-	var warnings []attribute.KeyValue
+	warnings := make([]attribute.KeyValue, 0, 2)
 
 	// Try to parse as valid span ID (16 hex chars)
 	if len(resultStr) == 16 {

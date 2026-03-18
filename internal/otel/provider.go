@@ -31,7 +31,7 @@ func verifyConnection(_ context.Context, endpoint string) error {
 	}
 
 	if httpProxy != "" || httpsProxy != "" {
-		log.Printf("Proxy configuration: HTTP_PROXY=%q HTTPS_PROXY=%q", httpProxy, httpsProxy)
+		log.Printf("Proxy configuration: HTTP_PROXY=%q HTTPS_PROXY=%q", httpProxy, httpsProxy) //nolint:gosec // Values from environment, not user input
 	} else {
 		log.Printf("No proxy configured (HTTP_PROXY/HTTPS_PROXY not set)")
 	}

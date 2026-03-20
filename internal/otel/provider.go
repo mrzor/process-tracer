@@ -16,11 +16,8 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
 
-// verifyConnection attempts to establish a connection to the OTLP endpoint
-// to verify it's reachable before proceeding. This ensures we fail fast if
-// the collector is unavailable.
-func verifyConnection(_ context.Context, endpoint string) error {
-	// Log proxy configuration for debugging
+// logConnectionInfo logs proxy and TLS configuration for debugging.
+func logConnectionInfo(cfg *config.OTELConfig) {
 	httpProxy := os.Getenv("HTTP_PROXY")
 	if httpProxy == "" {
 		httpProxy = os.Getenv("http_proxy")
@@ -36,20 +33,31 @@ func verifyConnection(_ context.Context, endpoint string) error {
 		log.Printf("No proxy configured (HTTP_PROXY/HTTPS_PROXY not set)")
 	}
 
-	log.Printf("Verifying OTLP/HTTP endpoint is reachable: %s", endpoint)
-
-	// For HTTP, just note that we'll verify on first export
-	// The HTTP exporter will fail fast if unreachable
-	log.Printf("Using OTLP/HTTP protocol (will verify on test span export)")
-	return nil
+	if cfg.IsInsecure() {
+		log.Printf("TLS: disabled (reason: %s)", cfg.InsecureReason())
+	} else {
+		log.Printf("TLS: enabled (reason: %s)", cfg.InsecureReason())
+		// Note useful TLS env vars if they're set
+		if cert := os.Getenv("OTEL_EXPORTER_OTLP_CERTIFICATE"); cert != "" {
+			log.Printf("  CA certificate: %s", cert) //nolint:gosec // File path from environment, not user input
+		}
+		if clientCert := os.Getenv("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE"); clientCert != "" {
+			log.Printf("  Client certificate: %s (mTLS)", clientCert) //nolint:gosec // File path from environment, not user input
+		}
+	}
 }
 
 // InitProvider initializes the OpenTelemetry tracer provider and establishes
-// connection to the OTLP endpoint. Returns error if connection cannot be established.
-// Sends a test span with the provided trace ID to verify end-to-end connectivity.
+// connection to the OTLP endpoint. Returns error if initialization fails.
 //
-// Note: Uses OTLP/HTTP protocol. The HTTP client automatically honors HTTP_PROXY,
+// Uses OTLP/HTTP protocol. The HTTP client automatically honors HTTP_PROXY,
 // HTTPS_PROXY, and NO_PROXY environment variables through Go's standard net/http transport.
+//
+// TLS behavior: HTTPS by default for non-localhost endpoints. Set OTEL_EXPORTER_OTLP_INSECURE=true
+// to force plain HTTP, or use an http:// scheme in the endpoint URL. Localhost endpoints
+// default to insecure for convenience. TLS certificates, mTLS, headers, compression,
+// and timeout are all configurable via standard OTEL_EXPORTER_OTLP_* env vars
+// handled natively by the otlptracehttp library (see OTELConfig doc comment for full list).
 func InitProvider(cfg *config.OTELConfig, versionInfo string) (*sdktrace.TracerProvider, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -60,25 +68,17 @@ func InitProvider(cfg *config.OTELConfig, versionInfo string) (*sdktrace.TracerP
 	log.Printf("OTEL Configuration:")
 	log.Printf("  Service Name: %s", cfg.ServiceName)
 	log.Printf("  Endpoint: %s", endpoint)
-	log.Printf("  OTEL_EXPORTER_OTLP_ENDPOINT: %q", cfg.ExporterEndpoint)
-	log.Printf("  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: %q", cfg.TracesEndpoint)
 	if cfg.ResourceAttributes != "" {
 		log.Printf("  Resource Attributes: %s", cfg.ResourceAttributes)
 	}
 
-	// Verify connection to OTLP endpoint before proceeding
-	// This ensures we abort early if the collector is unreachable
-	if err := verifyConnection(ctx, endpoint); err != nil {
-		return nil, err
-	}
+	logConnectionInfo(cfg)
 
-	// Create OTLP trace exporter with HTTP
-	// HTTP client will automatically use HTTP_PROXY/HTTPS_PROXY if set
-	exporter, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(endpoint),
-		otlptracehttp.WithInsecure(), // Use HTTP not HTTPS for local testing
-		otlptracehttp.WithTimeout(10*time.Second),
-	)
+	// Create OTLP trace exporter
+	// Endpoint and TLS options are derived from config; timeout, headers,
+	// compression, and certificates are handled by the library's own env var parsing.
+	opts := cfg.EndpointOptions()
+	exporter, err := otlptracehttp.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
 	}

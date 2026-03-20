@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,17 +76,20 @@ func ParseAttributeString(attrStr string) ([]CustomAttribute, error) {
 		// Split on first '=' to separate name from expression
 		parts := strings.SplitN(pair, "=", 2)
 		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid attribute format %q: expected NAME=EXPR", pair)
+			log.Printf("Warning: skipping attribute with invalid format %q (expected NAME=EXPR)", pair)
+			continue
 		}
 
 		name := strings.TrimSpace(parts[0])
 		expr := strings.TrimSpace(parts[1])
 
 		if name == "" {
-			return nil, fmt.Errorf("attribute name cannot be empty in %q", pair)
+			log.Printf("Warning: skipping attribute with empty name in %q", pair)
+			continue
 		}
 		if expr == "" {
-			return nil, fmt.Errorf("attribute expression cannot be empty in %q", pair)
+			log.Printf("Warning: skipping attribute with empty expression in %q", pair)
+			continue
 		}
 
 		attrs = append(attrs, CustomAttribute{
@@ -395,16 +399,19 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 				// Split on first '=' to separate name from expression
 				parts := strings.SplitN(attrStr, "=", 2)
 				if len(parts) != 2 {
-					return fmt.Errorf("invalid attribute format %q: expected NAME=EXPR", attrStr)
+					log.Printf("Warning: skipping attribute with invalid format %q (expected NAME=EXPR)", attrStr)
+					continue
 				}
 				name := strings.TrimSpace(parts[0])
 				expr := strings.TrimSpace(parts[1])
 
 				if name == "" {
-					return fmt.Errorf("attribute name cannot be empty in %q", attrStr)
+					log.Printf("Warning: skipping attribute with empty name in %q", attrStr)
+					continue
 				}
 				if expr == "" {
-					return fmt.Errorf("attribute expression cannot be empty in %q", attrStr)
+					log.Printf("Warning: skipping attribute with empty expression in %q", attrStr)
+					continue
 				}
 
 				customAttrs = append(customAttrs, CustomAttribute{
@@ -463,7 +470,7 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 	}
 
 	if resultCfg == nil {
-		return nil, fmt.Errorf("failed to parse configuration")
+		return nil, fmt.Errorf("no command specified\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer -- bash -c 'echo hello'")
 	}
 
 	return resultCfg, nil

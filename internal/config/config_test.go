@@ -157,26 +157,25 @@ func TestParseArgs_CustomAttributeWithEquals(t *testing.T) {
 func TestParseArgs_CustomAttributeInvalidFormat(t *testing.T) {
 	args := []string{"process-tracer", "-a", "invalid_no_equals", "--", "ls"}
 
-	_, err := ParseArgs(args, testLicenseText, "", "", "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid attribute format")
-	assert.Contains(t, err.Error(), "NAME=EXPR")
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, cfg.CustomAttributes, "malformed attribute should be skipped with a warning")
 }
 
 func TestParseArgs_CustomAttributeEmptyName(t *testing.T) {
 	args := []string{"process-tracer", "-a", "=value", "--", "ls"}
 
-	_, err := ParseArgs(args, testLicenseText, "", "", "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "name cannot be empty")
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, cfg.CustomAttributes, "empty-name attribute should be skipped with a warning")
 }
 
 func TestParseArgs_CustomAttributeEmptyExpression(t *testing.T) {
 	args := []string{"process-tracer", "-a", "name=", "--", "ls"}
 
-	_, err := ParseArgs(args, testLicenseText, "", "", "")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expression cannot be empty")
+	cfg, err := ParseArgs(args, testLicenseText, "", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, cfg.CustomAttributes, "empty-expression attribute should be skipped with a warning")
 }
 
 func TestParseArgs_MissingCommand(t *testing.T) {
@@ -302,24 +301,21 @@ func TestParseAttributeString_Empty(t *testing.T) {
 }
 
 func TestParseAttributeString_InvalidFormat(t *testing.T) {
-	attrStr := "invalid_no_equals"
-	_, err := ParseAttributeString(attrStr)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid attribute format")
+	attrs, err := ParseAttributeString("invalid_no_equals")
+	require.NoError(t, err)
+	assert.Empty(t, attrs, "malformed attribute should be skipped with a warning")
 }
 
 func TestParseAttributeString_EmptyName(t *testing.T) {
-	attrStr := "=value"
-	_, err := ParseAttributeString(attrStr)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "name cannot be empty")
+	attrs, err := ParseAttributeString("=value")
+	require.NoError(t, err)
+	assert.Empty(t, attrs, "empty-name attribute should be skipped with a warning")
 }
 
 func TestParseAttributeString_EmptyExpression(t *testing.T) {
-	attrStr := "name="
-	_, err := ParseAttributeString(attrStr)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "expression cannot be empty")
+	attrs, err := ParseAttributeString("name=")
+	require.NoError(t, err)
+	assert.Empty(t, attrs, "empty-expression attribute should be skipped with a warning")
 }
 
 func TestParseAttributeString_Whitespace(t *testing.T) {
@@ -441,9 +437,9 @@ func TestParseSymlinkMode_InvalidAttributes(t *testing.T) {
 		ShellBinary: "/bin/sh", // Provide valid shell so we get to attribute parsing
 	}
 
-	_, err := parseSymlinkMode([]string{"mybash", "echo", "test"}, envCfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid attribute format")
+	cfg, err := parseSymlinkMode([]string{"mybash", "echo", "test"}, envCfg)
+	require.NoError(t, err)
+	assert.Empty(t, cfg.CustomAttributes, "malformed attribute should be skipped with a warning")
 }
 
 func TestParseEnvConfig(t *testing.T) {

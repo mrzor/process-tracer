@@ -16,7 +16,8 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// CustomAttribute represents a custom span attribute with an expression.
+// CustomAttribute represents a custom span attribute.
+// Expression holds the raw value: either a literal string or an "expr:"-prefixed expression.
 type CustomAttribute struct {
 	Name       string
 	Expression string
@@ -28,15 +29,15 @@ type Config struct {
 	Command string
 	// Args are the arguments to pass to the command
 	Args []string
-	// TraceID is an optional expression to evaluate for the OpenTelemetry trace ID.
+	// TraceID is an optional value for the OpenTelemetry trace ID.
+	// Literal strings or "expr:"-prefixed expressions are accepted.
 	// If empty, the OpenTelemetry SDK will auto-generate a random trace ID.
-	// Examples: env["TRACE_ID"], "literal-string-to-hash", "a1b2...c3d4" (32 hex chars)
 	TraceID string
-	// ParentID is an optional expression to evaluate for the OpenTelemetry parent span ID.
+	// ParentID is an optional value for the OpenTelemetry parent span ID.
+	// Literal strings or "expr:"-prefixed expressions are accepted.
 	// If empty, the root span will have no parent.
-	// Examples: env["PARENT_SPAN_ID"], "0123456789abcdef" (16 hex chars)
 	ParentID string
-	// CustomAttributes are user-defined span attributes with expressions
+	// CustomAttributes are user-defined span attributes (literal or expr:-prefixed values)
 	CustomAttributes []CustomAttribute
 }
 
@@ -349,8 +350,9 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 			"EXAMPLES:\n" +
 			"   process-tracer -- bash -c 'echo hello'\n" +
 			"   process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- ls -la\n" +
-			"   process-tracer -a env_name='env[\"ENVIRONMENT\"]' -- command args\n" +
-			"   process-tracer -a foo='env[\"FOO\"]' -a bar='args[0]' -- cmd",
+			"   process-tracer -a service.name=my-service -- command args\n" +
+			"   process-tracer -a env_name='expr:env[\"ENVIRONMENT\"]' -- command args\n" +
+			"   process-tracer -a foo='expr:env[\"FOO\"]' -a bar=literal-val -- cmd",
 		Version: formatVersionString(version, commit, buildDate),
 		Flags: []cli.Flag{
 			&cli.BoolFlag{
@@ -367,7 +369,7 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 			&cli.StringFlag{
 				Name:    "trace-id",
 				Aliases: []string{"t"},
-				Usage:   "Expression to evaluate for OpenTelemetry trace ID (SDK auto-generates if not provided)",
+				Usage:   "OpenTelemetry trace ID: literal hex string or expr:EXPRESSION (SDK auto-generates if not provided)",
 				Action: func(_ context.Context, _ *cli.Command, s string) error {
 					if s != "" {
 						traceID = s
@@ -378,7 +380,7 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 			&cli.StringFlag{
 				Name:    "parent-id",
 				Aliases: []string{"p"},
-				Usage:   "Expression to evaluate for OpenTelemetry parent span ID (null if not provided)",
+				Usage:   "OpenTelemetry parent span ID: literal hex string or expr:EXPRESSION (null if not provided)",
 				Action: func(_ context.Context, _ *cli.Command, s string) error {
 					if s != "" {
 						parentID = s
@@ -389,7 +391,7 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 			&cli.StringSliceFlag{
 				Name:        "a",
 				Aliases:     []string{"attribute"},
-				Usage:       "Add custom span attribute as NAME=EXPR (repeatable)",
+				Usage:       "Add custom span attribute as NAME=VALUE or NAME=expr:EXPRESSION (repeatable)",
 				Destination: &attrArgs,
 			},
 		},

@@ -19,7 +19,7 @@ bullet points and surprising absence of emojis.
 - Process tree tracing with parent-child relationships
 - TCP connection tracking (connect/close events)
 - Rudimentary hackish pseudo reverse-DNS system
-- Expr expressions can be used to add extra attributes to spans
+- Custom span attributes (literal or dynamic via `expr:` prefix)
 - Beware: process environment variable count is limited, and values are truncated after 2048 bytes
 
 ## Quick Start
@@ -39,29 +39,28 @@ sudo mise setcap
 ./process-tracer -- command ...
 
 # Set trace_id (defaults to a random one)
-./process-tracer --trace-id a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
-
-# Or use short form
 ./process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
 
-# expr-based trace-id
-./process-tracer -t 'env["TRACE_ID"]' -- echo hello
+# Dynamic trace-id from environment (note the expr: prefix)
+./process-tracer -t 'expr:env["TRACE_ID"]' -- echo hello
 
-# When the expression does not evaluate to a valid trace id, it will be
-# SHA-256'd to transmute it into one
-./process-tracer -t 'env["SHORT_ID"]' -- echo hello
+# When the value is not a valid 32-char hex trace id, it gets SHA-256'd
+./process-tracer -t my-build-id-123 -- echo hello
 
 # Set parent_id (defaults to no parent id)
-./process-tracer --parent-id 0123456789abcdef -- command ...
+./process-tracer -p 0123456789abcdef -- command ...
 
-# Or use expr-based parent-id
-./process-tracer -p 'env["PARENT_SPAN_ID"]' -- command ...
+# Dynamic parent-id from environment
+./process-tracer -p 'expr:env["PARENT_SPAN_ID"]' -- command ...
 
-# Set extra attributes from environment (using NAME=EXPR format)
-./process-tracer -a extra.attribute.name='env["EXTRA_ATTR"]' -- command ...
+# Literal span attributes (the common case — no prefix needed)
+./process-tracer -a service.name=my-service -a env=production -- command ...
 
-# Multiple attributes
-./process-tracer -a env_name='env["ENVIRONMENT"]' -a pod='env["POD_NAME"]' -- command ...
+# Dynamic attributes via expr: prefix
+./process-tracer -a env_name='expr:env["ENVIRONMENT"]' -a pod='expr:env["POD_NAME"]' -- command ...
+
+# Mix literal and dynamic
+./process-tracer -a team=platform -a region='expr:env["AWS_REGION"]' -- command ...
 
 # Show help
 ./process-tracer --help
@@ -83,17 +82,17 @@ All CLI flags have environment variable equivalents. CLI flags take precedence.
 
 | Variable | Equivalent flag | Description |
 |---|---|---|
-| `PROCESS_TRACER_TRACE_ID` | `--trace-id` / `-t` | Expression for the OpenTelemetry trace ID |
-| `PROCESS_TRACER_PARENT_ID` | `--parent-id` / `-p` | Expression for the OpenTelemetry parent span ID |
-| `PROCESS_TRACER_ATTRIBUTES` | `-a` (repeated) | Semicolon-separated `NAME=EXPR` pairs |
+| `PROCESS_TRACER_TRACE_ID` | `--trace-id` / `-t` | Trace ID: literal hex or `expr:EXPRESSION` |
+| `PROCESS_TRACER_PARENT_ID` | `--parent-id` / `-p` | Parent span ID: literal hex or `expr:EXPRESSION` |
+| `PROCESS_TRACER_ATTRIBUTES` | `-a` (repeated) | Semicolon-separated `NAME=VALUE` pairs (use `expr:` prefix for dynamic values) |
 | `PROCESS_TRACER_MODE` | _(none)_ | Invocation mode: `auto` (default), `direct`, or `symlink` |
 | `PROCESS_TRACER_SHELL_BINARY` | _(none)_ | Explicit path to the real shell binary (symlink mode only) |
 | `PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS` | _(none)_ | Max time in ms to flush remaining spans at exit (default: 200) |
 
 ```bash
-export PROCESS_TRACER_TRACE_ID='env["BUILD_ID"]'
-export PROCESS_TRACER_PARENT_ID='env["PARENT_SPAN"]'
-export PROCESS_TRACER_ATTRIBUTES='env_name=env["ENVIRONMENT"];region=env["AWS_REGION"]'
+export PROCESS_TRACER_TRACE_ID='expr:env["BUILD_ID"]'
+export PROCESS_TRACER_PARENT_ID='expr:env["PARENT_SPAN"]'
+export PROCESS_TRACER_ATTRIBUTES='env_name=expr:env["ENVIRONMENT"];region=expr:env["AWS_REGION"]'
 ./process-tracer -- command ...
 ```
 
@@ -144,8 +143,8 @@ ln -s /usr/local/bin/process-tracer /usr/local/bin/bash-traced
 # ln -sf /usr/local/bin/process-tracer /usr/local/bin/bash
 
 # Configure via environment (CLI flags are NOT available in symlink mode)
-export PROCESS_TRACER_TRACE_ID='env["BUILD_ID"]'
-export PROCESS_TRACER_ATTRIBUTES='ci.job=env["CI_JOB_ID"]'
+export PROCESS_TRACER_TRACE_ID='expr:env["BUILD_ID"]'
+export PROCESS_TRACER_ATTRIBUTES='ci.job=expr:env["CI_JOB_ID"]'
 
 # Invocation looks exactly like the real shell — no "--" needed
 ./bash-traced -c 'npm test'
@@ -168,18 +167,31 @@ This can be handy if auto-detection gets confused (e.g. hardlinks instead of sym
 
 <!-- */AI SLOP* -->
 
-## Expressions
+## Values and Expressions
 
-The `-a` flag accepts any valid [expr](https://expr-lang.org/) expression.
+All values (`-a`, `-t`, `-p` and their env var equivalents) are **literal by default**.
+To evaluate a value dynamically at runtime, prefix it with `expr:`.
 
-The process environment is bound to `env`, the full commandline to `cmdline` and
-individual commandline atoms to `args`.
+```bash
+# Literal — used as-is
+-a service.name=my-service
+-t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4
 
-This gives you some flexibility if you're integrating in some CI environment,
-convoluted build system and whatnot.
+# Expression — evaluated at runtime against the traced process
+-a env_name='expr:env["ENVIRONMENT"]'
+-t 'expr:env["TRACE_ID"]'
+```
 
-Note: The `--trace-id` / `-t` flag expects a 32-character hexadecimal string (128-bit trace ID),
-not an expression.
+Expressions use the [expr](https://expr-lang.org/) language with these bindings:
+
+| Binding    | Type                | Description |
+|---|---|---|
+| `env`      | `map[string]string` | Traced process environment variables |
+| `args`     | `[]string`          | Traced process command-line arguments |
+| `cmdline`  | `string`            | Full command line as a single string |
+
+If an `expr:` expression fails to compile, it is warned and skipped (attributes)
+or treated as unset (trace-id / parent-id). This tool never aborts on bad input.
 
 ## Development
 

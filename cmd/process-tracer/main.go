@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -74,7 +75,7 @@ func setupOTEL(versionInfo string) (trace.Tracer, func(), error) {
 	}
 
 	cleanup := func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), otelCfg.ShutdownTimeout())
 		defer cancel()
 		if err := otel.ShutdownProvider(tp, shutdownCtx); err != nil {
 			log.Printf("Error shutting down OTEL provider: %v", err)
@@ -207,16 +208,16 @@ func executeCommand(cfg *config.Config, loader *bpfloader.Loader) error {
 }
 
 // calculateDrainTimeout computes the timeout for draining late TCP events.
-// Uses a fraction of tcp_fin_timeout with bounds of 500ms to 2s.
+// Uses a small fraction of tcp_fin_timeout with bounds of 50ms to 500ms.
 func calculateDrainTimeout() time.Duration {
 	tcpFinTimeout := getTCPFinTimeout()
-	// Use 1% of tcp_fin_timeout with a minimum of 500ms and maximum of 2s
-	drainTimeout := time.Duration(tcpFinTimeout*10) * time.Millisecond
-	if drainTimeout < 500*time.Millisecond {
-		drainTimeout = 500 * time.Millisecond
+	// Use 0.2% of tcp_fin_timeout (e.g. 60s → 120ms)
+	drainTimeout := time.Duration(tcpFinTimeout*2) * time.Millisecond
+	if drainTimeout < 50*time.Millisecond {
+		drainTimeout = 50 * time.Millisecond
 	}
-	if drainTimeout > 2*time.Second {
-		drainTimeout = 2 * time.Second
+	if drainTimeout > 500*time.Millisecond {
+		drainTimeout = 500 * time.Millisecond
 	}
 	return drainTimeout
 }
@@ -237,14 +238,23 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer cleanupOTEL()
 
 	// Load BPF program and open ring buffer
 	loader, rd, cleanupBPF, err := setupBPF()
 	if err != nil {
+		cleanupOTEL()
 		return err
 	}
-	defer cleanupBPF()
+
+	// Run BPF and OTEL cleanup in parallel since both involve
+	// kernel/network waits and are independent of each other.
+	defer func() {
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); cleanupBPF() }()
+		go func() { defer wg.Done(); cleanupOTEL() }()
+		wg.Wait()
+	}()
 
 	// Initialize components and create event stream
 	stream, err := setupComponents(cfg, tracer, rd)

@@ -88,6 +88,7 @@ All CLI flags have environment variable equivalents. CLI flags take precedence.
 | `PROCESS_TRACER_ATTRIBUTES` | `-a` (repeated) | Semicolon-separated `NAME=EXPR` pairs |
 | `PROCESS_TRACER_MODE` | _(none)_ | Invocation mode: `auto` (default), `direct`, or `symlink` |
 | `PROCESS_TRACER_SHELL_BINARY` | _(none)_ | Explicit path to the real shell binary (symlink mode only) |
+| `PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS` | _(none)_ | Max time in ms to flush remaining spans at exit (default: 200) |
 
 ```bash
 export PROCESS_TRACER_TRACE_ID='env["BUILD_ID"]'

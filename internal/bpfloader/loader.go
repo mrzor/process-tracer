@@ -4,6 +4,7 @@ package bpfloader
 import (
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/mrzor/process-tracer/internal/bpf"
 
@@ -139,57 +140,46 @@ func (l *Loader) TrackPID(pid int) error {
 }
 
 // Close releases all BPF resources including links and loaded objects.
+// Link detachments are parallelized since each involves kernel RCU synchronization (~200ms).
 func (l *Loader) Close() error {
-	var errs []error
-
-	if l.tcpCloseLink != nil {
-		if err := l.tcpCloseLink.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing TCP close link: %w", err))
-		}
+	links := []struct {
+		name string
+		link link.Link
+	}{
+		{"TCP close", l.tcpCloseLink},
+		{"TCP v6 connect exit", l.tcpV6ConnectExit},
+		{"TCP v6 connect entry", l.tcpV6ConnectEntry},
+		{"TCP v4 connect exit", l.tcpV4ConnectExit},
+		{"TCP v4 connect entry", l.tcpV4ConnectEntry},
+		{"exit", l.exitLink},
+		{"exec", l.execLink},
+		{"execve enter", l.execveEnterLink},
 	}
 
-	if l.tcpV6ConnectExit != nil {
-		if err := l.tcpV6ConnectExit.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing TCP v6 connect exit link: %w", err))
+	var (
+		mu   sync.Mutex
+		errs []error
+		wg   sync.WaitGroup
+	)
+
+	for _, entry := range links {
+		if entry.link == nil {
+			continue
 		}
+		wg.Add(1)
+		go func(name string, lnk link.Link) {
+			defer wg.Done()
+			if err := lnk.Close(); err != nil {
+				mu.Lock()
+				errs = append(errs, fmt.Errorf("closing %s link: %w", name, err))
+				mu.Unlock()
+			}
+		}(entry.name, entry.link)
 	}
 
-	if l.tcpV6ConnectEntry != nil {
-		if err := l.tcpV6ConnectEntry.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing TCP v6 connect entry link: %w", err))
-		}
-	}
+	wg.Wait()
 
-	if l.tcpV4ConnectExit != nil {
-		if err := l.tcpV4ConnectExit.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing TCP v4 connect exit link: %w", err))
-		}
-	}
-
-	if l.tcpV4ConnectEntry != nil {
-		if err := l.tcpV4ConnectEntry.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing TCP v4 connect entry link: %w", err))
-		}
-	}
-
-	if l.exitLink != nil {
-		if err := l.exitLink.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing exit link: %w", err))
-		}
-	}
-
-	if l.execLink != nil {
-		if err := l.execLink.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing exec link: %w", err))
-		}
-	}
-
-	if l.execveEnterLink != nil {
-		if err := l.execveEnterLink.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("closing execve enter link: %w", err))
-		}
-	}
-
+	// Close BPF objects after all links are detached
 	if err := l.objs.Close(); err != nil {
 		errs = append(errs, fmt.Errorf("closing BPF objects: %w", err))
 	}

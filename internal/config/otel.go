@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/caarlos0/env/v11"
 	"go.opentelemetry.io/otel/attribute"
@@ -15,10 +16,11 @@ import (
 //
 // The following env vars are parsed and managed by us:
 //
-//   - OTEL_SERVICE_NAME           — service name (default: "sched_trace")
-//   - OTEL_RESOURCE_ATTRIBUTES    — comma-separated key=value resource attributes
-//   - OTEL_EXPORTER_OTLP_ENDPOINT — base endpoint URL or host:port (default: localhost:4318)
-//   - OTEL_EXPORTER_OTLP_INSECURE — force plain HTTP when "true" (default: auto-detect from endpoint)
+//   - OTEL_SERVICE_NAME                    — service name (default: "sched_trace")
+//   - OTEL_RESOURCE_ATTRIBUTES             — comma-separated key=value resource attributes
+//   - OTEL_EXPORTER_OTLP_ENDPOINT          — base endpoint URL or host:port (default: localhost:4318)
+//   - OTEL_EXPORTER_OTLP_INSECURE          — force plain HTTP when "true" (default: auto-detect from endpoint)
+//   - PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS    — max time in ms to flush spans at exit (default: 200)
 //
 // The following env vars are handled natively by the otlptracehttp library.
 // We do not parse them, but they are effective at runtime:
@@ -35,6 +37,15 @@ type OTELConfig struct {
 	ResourceAttributes string `env:"OTEL_RESOURCE_ATTRIBUTES" envDefault:""`
 	ExporterEndpoint   string `env:"OTEL_EXPORTER_OTLP_ENDPOINT" envDefault:""`
 	Insecure           string `env:"OTEL_EXPORTER_OTLP_INSECURE" envDefault:""`
+	ShutdownTimeoutMs  int    `env:"PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS" envDefault:"200"`
+}
+
+// ShutdownTimeout returns the configured shutdown timeout as a time.Duration.
+func (c *OTELConfig) ShutdownTimeout() time.Duration {
+	if c.ShutdownTimeoutMs <= 0 {
+		return 200 * time.Millisecond
+	}
+	return time.Duration(c.ShutdownTimeoutMs) * time.Millisecond
 }
 
 // ParseOTELConfig parses OTEL configuration from environment variables.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -463,14 +464,18 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 	// Run the app
 	err := app.Run(context.Background(), args)
 
-	// If help or version was requested, the app exits early - this is expected
-	// In that case, resultCfg will be nil and we should return the error
+	// Handle early-exit flags (--help, --version, --license)
 	if err != nil {
+		var exitErr cli.ExitCoder
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
+			os.Exit(0)
+		}
 		return nil, err
 	}
 
 	if resultCfg == nil {
-		return nil, fmt.Errorf("no command specified\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer -- bash -c 'echo hello'")
+		// --help or --version was displayed; exit cleanly
+		os.Exit(0)
 	}
 
 	return resultCfg, nil

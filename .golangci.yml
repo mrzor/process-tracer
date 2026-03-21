@@ -69,6 +69,12 @@ linters:
           - funlen
           - gocyclo
 
+      # parseDirectMode has high cyclomatic complexity due to urfave/cli setup
+      - path: internal/config/config\.go
+        text: "parseDirectMode"
+        linters:
+          - gocyclo
+
       # Allow prealloc for slices where size is unknown
       - path: internal/reversedns/
         linters:

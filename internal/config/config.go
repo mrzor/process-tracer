@@ -59,8 +59,33 @@ func ParseEnvConfig() (*EnvConfig, error) {
 	return &cfg, nil
 }
 
-// ParseAttributeString parses semicolon-separated NAME=EXPR pairs.
-// Format: "name1=expr1;name2=expr2;name3=expr3".
+// parseAttribute parses a single "NAME=VALUE" string into a CustomAttribute.
+// Returns the attribute and true on success, or zero value and false if invalid
+// (with a warning logged).
+func parseAttribute(s string) (CustomAttribute, bool) {
+	parts := strings.SplitN(s, "=", 2)
+	if len(parts) != 2 {
+		log.Printf("Warning: skipping attribute with invalid format %q (expected NAME=VALUE)", s)
+		return CustomAttribute{}, false
+	}
+
+	name := strings.TrimSpace(parts[0])
+	value := strings.TrimSpace(parts[1])
+
+	if name == "" {
+		log.Printf("Warning: skipping attribute with empty name in %q", s)
+		return CustomAttribute{}, false
+	}
+	if value == "" {
+		log.Printf("Warning: skipping attribute with empty value in %q", s)
+		return CustomAttribute{}, false
+	}
+
+	return CustomAttribute{Name: name, Expression: value}, true
+}
+
+// ParseAttributeString parses semicolon-separated NAME=VALUE pairs.
+// Format: "name1=value1;name2=value2;name3=expr:env[\"FOO\"]".
 func ParseAttributeString(attrStr string) ([]CustomAttribute, error) {
 	if attrStr == "" {
 		return nil, nil
@@ -74,30 +99,9 @@ func ParseAttributeString(attrStr string) ([]CustomAttribute, error) {
 		if pair == "" {
 			continue
 		}
-
-		// Split on first '=' to separate name from expression
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			log.Printf("Warning: skipping attribute with invalid format %q (expected NAME=EXPR)", pair)
-			continue
+		if attr, ok := parseAttribute(pair); ok {
+			attrs = append(attrs, attr)
 		}
-
-		name := strings.TrimSpace(parts[0])
-		expr := strings.TrimSpace(parts[1])
-
-		if name == "" {
-			log.Printf("Warning: skipping attribute with empty name in %q", pair)
-			continue
-		}
-		if expr == "" {
-			log.Printf("Warning: skipping attribute with empty expression in %q", pair)
-			continue
-		}
-
-		attrs = append(attrs, CustomAttribute{
-			Name:       name,
-			Expression: expr,
-		})
 	}
 
 	return attrs, nil
@@ -399,34 +403,15 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			// Parse custom attributes from -a flags
 			for _, attrStr := range attrArgs {
-				// Split on first '=' to separate name from expression
-				parts := strings.SplitN(attrStr, "=", 2)
-				if len(parts) != 2 {
-					log.Printf("Warning: skipping attribute with invalid format %q (expected NAME=EXPR)", attrStr)
-					continue
+				if attr, ok := parseAttribute(attrStr); ok {
+					customAttrs = append(customAttrs, attr)
 				}
-				name := strings.TrimSpace(parts[0])
-				expr := strings.TrimSpace(parts[1])
-
-				if name == "" {
-					log.Printf("Warning: skipping attribute with empty name in %q", attrStr)
-					continue
-				}
-				if expr == "" {
-					log.Printf("Warning: skipping attribute with empty expression in %q", attrStr)
-					continue
-				}
-
-				customAttrs = append(customAttrs, CustomAttribute{
-					Name:       name,
-					Expression: expr,
-				})
 			}
 
 			// Get the command and its arguments
 			cmdArgs := cmd.Args().Slice()
 			if len(cmdArgs) == 0 {
-				return fmt.Errorf("no command specified\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer -a env_name='env[\"ENVIRONMENT\"]' -- bash -c 'echo hello'")
+				return fmt.Errorf("no command specified\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer -a service.name=my-svc -- bash -c 'echo hello'")
 			}
 
 			// Merge with environment config (CLI overrides)

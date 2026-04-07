@@ -1,0 +1,23 @@
+rules:
+  - name: "e2e-make"
+    match:
+      command: "make"
+    attributes:
+      service.name: "ambient-e2e-make"
+
+  - name: "e2e-perl"
+    match:
+      command: "perl"
+    attributes:
+      service.name: "ambient-e2e-perl"
+
+otel:
+  endpoint: "http://10.0.2.2:4318"
+  service_name: "ambient-e2e-daemon"
+
+limits:
+  max_concurrent_sessions: 10
+  max_pids_per_session: 100
+  max_total_pids: 500
+  session_timeout: 5m
+  ring_buffer_size: 4194304

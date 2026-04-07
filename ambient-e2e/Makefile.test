@@ -1,0 +1,6 @@
+.PHONY: all
+all:
+	echo "phase1: starting"
+	sleep 0.2
+	hostname
+	bash -c 'echo "nested child"; sleep 0.1; uname -r'

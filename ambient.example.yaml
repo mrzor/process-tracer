@@ -1,0 +1,37 @@
+# Example ambient mode configuration for process-tracer-daemon.
+#
+# Usage:
+#   sudo ./process-tracer-daemon ambient.example.yaml
+#
+# Or via environment variable:
+#   export PROCESS_TRACER_DAEMON_CONFIG=ambient.example.yaml
+#   sudo ./process-tracer-daemon
+
+rules:
+  # Trace all make invocations
+  - name: "builds"
+    match:
+      command: "make"
+    attributes:
+      service.name: "build"
+
+  # Trace deploy scripts
+  - name: "deployments"
+    match:
+      command: "deploy-*"
+    attributes:
+      service.name: "deployment"
+      deploy.env: 'expr:env["DEPLOY_ENV"]'
+    trace_id: 'expr:env["DEPLOY_TRACE_ID"]'
+
+# Optional: override OTEL settings (otherwise uses standard OTEL_* env vars)
+# otel:
+#   endpoint: "localhost:4318"
+#   service_name: "process-tracer-daemon"
+
+limits:
+  max_concurrent_sessions: 100
+  max_pids_per_session: 1000
+  max_total_pids: 8000
+  session_timeout: 1h
+  ring_buffer_size: 8388608  # 8MB

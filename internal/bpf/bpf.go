@@ -19,6 +19,7 @@ const (
 	EVENT_TCP_CLOSE      = 4
 	EVENT_EXEC_ENV_CHUNK = 5
 	EVENT_ENV_VAR        = 6
+	EVENT_EXEC_CANDIDATE = 7
 )
 
 // Event matches the C struct from process_tracer.h.
@@ -43,7 +44,7 @@ type EventData struct {
 
 // ProcessData extracts process event fields.
 func (e *Event) ProcessData() *ProcessEventData {
-	if e.Type != EVENT_EXEC && e.Type != EVENT_EXIT {
+	if e.Type != EVENT_EXEC && e.Type != EVENT_EXIT && e.Type != EVENT_EXEC_CANDIDATE {
 		return nil
 	}
 	//nolint:gosec // Unsafe required for eBPF C struct interop
@@ -126,6 +127,12 @@ type ProcessTracerPrograms = processTracerPrograms
 
 // ProcessTracerMaps provides access to the BPF maps.
 type ProcessTracerMaps = processTracerMaps
+
+// LoadProcessTracerSpec loads and returns the BPF CollectionSpec without loading into kernel.
+// This allows modifying variables (e.g. ambient_mode) before loading.
+func LoadProcessTracerSpec() (*ebpf.CollectionSpec, error) {
+	return loadProcessTracer()
+}
 
 // LoadProcessTracerObjects loads the BPF programs and maps.
 func LoadProcessTracerObjects(obj *processTracerObjects, opts *ebpf.CollectionOptions) error {

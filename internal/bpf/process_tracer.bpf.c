@@ -8,6 +8,9 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+/* Operating mode: 0 = direct (default), 1 = ambient (daemon) */
+volatile const u8 ambient_mode = 0;
+
 /* Address family constants */
 #define AF_INET  2
 #define AF_INET6 10
@@ -405,17 +408,26 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     ppid = bpf_core_cast(task, struct task_struct)->real_parent->tgid;
 
     /* Check if parent is tracked, if so track this child too */
-    if (!bpf_map_lookup_elem(&tracked_pids, &ppid))
+    if (bpf_map_lookup_elem(&tracked_pids, &ppid)) {
+        /* Parent is tracked - add child and emit EXEC */
+        bpf_map_update_elem(&tracked_pids, &pid, &val, BPF_ANY);
+
+        e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+        if (!e)
+            return 0;
+
+        e->type = EVENT_EXEC;
+    } else if (ambient_mode) {
+        /* Ambient mode: parent not tracked - emit EXEC_CANDIDATE for Go-side filtering.
+         * Do NOT add to tracked_pids yet; Go decides after filter evaluation. */
+        e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+        if (!e)
+            return 0;
+
+        e->type = EVENT_EXEC_CANDIDATE;
+    } else {
         return 0;
-
-    /* Add this PID to tracked set */
-    bpf_map_update_elem(&tracked_pids, &pid, &val, BPF_ANY);
-
-    e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-    if (!e)
-        return 0;
-
-    e->type = EVENT_EXEC;
+    }
     e->pid = pid;
     e->uid = (u32)uid_gid;
     e->ppid = ppid;
@@ -451,8 +463,10 @@ int handle_exit(struct trace_event_raw_sched_process_template *ctx)
     if (pid != tid)
         return 0;
 
-    /* Check if this PID is being tracked */
-    if (!bpf_map_lookup_elem(&tracked_pids, &pid))
+    /* In direct mode, only emit for tracked PIDs.
+     * In ambient mode, emit for all processes (Go-side discards unneeded ones).
+     * This avoids the race where a process exits before Go calls TrackPID(). */
+    if (!ambient_mode && !bpf_map_lookup_elem(&tracked_pids, &pid))
         return 0;
 
     uid_gid = bpf_get_current_uid_gid();

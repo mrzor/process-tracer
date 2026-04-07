@@ -12,6 +12,12 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
+// LoaderOptions configures BPF program loading behavior.
+type LoaderOptions struct {
+	AmbientMode    bool // Enable ambient mode (monitor all execs, not just tracked trees)
+	RingBufferSize int  // Ring buffer size in bytes (0 = default 2MB)
+}
+
 // Loader manages the lifecycle of BPF programs and their attachments.
 type Loader struct {
 	objs              bpf.ProcessTracerObjects
@@ -27,9 +33,42 @@ type Loader struct {
 
 // New creates a new Loader and loads the BPF objects into the kernel.
 func New() (*Loader, error) {
+	return NewWithOptions(LoaderOptions{})
+}
+
+// NewWithOptions creates a new Loader with the given options.
+func NewWithOptions(opts LoaderOptions) (*Loader, error) {
 	l := &Loader{}
 
-	if err := bpf.LoadProcessTracerObjects(&l.objs, nil); err != nil {
+	if !opts.AmbientMode {
+		// Direct mode: simple path, no spec modifications needed
+		if err := bpf.LoadProcessTracerObjects(&l.objs, nil); err != nil {
+			return nil, fmt.Errorf("loading BPF objects: %w", err)
+		}
+		return l, nil
+	}
+
+	// Ambient mode: load spec first, modify variables, then load into kernel
+	spec, err := bpf.LoadProcessTracerSpec()
+	if err != nil {
+		return nil, fmt.Errorf("loading BPF spec: %w", err)
+	}
+
+	if v, ok := spec.Variables["ambient_mode"]; ok {
+		if err := v.Set(uint8(1)); err != nil {
+			return nil, fmt.Errorf("setting ambient_mode variable: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("BPF spec missing ambient_mode variable (regenerate BPF bindings)")
+	}
+
+	if opts.RingBufferSize > 0 {
+		if m, ok := spec.Maps["rb"]; ok {
+			m.MaxEntries = uint32(opts.RingBufferSize) //nolint:gosec // ring buffer size is always positive
+		}
+	}
+
+	if err := spec.LoadAndAssign(&l.objs, nil); err != nil {
 		return nil, fmt.Errorf("loading BPF objects: %w", err)
 	}
 
@@ -135,6 +174,16 @@ func (l *Loader) TrackPID(pid int) error {
 	val := uint8(1)
 	if err := l.objs.TrackedPids.Put(&pidKey, &val); err != nil {
 		return fmt.Errorf("adding PID %d to tracked map: %w", pid, err)
+	}
+	return nil
+}
+
+// UntrackPID removes a PID from the tracked_pids map in the BPF program.
+func (l *Loader) UntrackPID(pid int) error {
+	//nolint:gosec // int to uint32 conversion required for BPF map key type
+	pidKey := uint32(pid)
+	if err := l.objs.TrackedPids.Delete(&pidKey); err != nil {
+		return fmt.Errorf("removing PID %d from tracked map: %w", pid, err)
 	}
 	return nil
 }

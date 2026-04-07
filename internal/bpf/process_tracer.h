@@ -10,6 +10,7 @@ enum event_type {
     EVENT_TCP_CLOSE = 4,
     EVENT_EXEC_ENV_CHUNK = 5,
     EVENT_ENV_VAR = 6,
+    EVENT_EXEC_CANDIDATE = 7,
 };
 
 struct event {

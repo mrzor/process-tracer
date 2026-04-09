@@ -35,13 +35,9 @@ wc -l /etc/passwd > /dev/null
 echo "[guest] Running perl (matched)..."
 perl -e 'system("echo perl-child"); system("sleep 0.1"); system("uname -m")'
 
-echo "[guest] Waiting for trace flush..."
-sleep 3
-
 echo "[guest] Stopping daemon (PID $DAEMON_PID)..."
 kill -TERM "$DAEMON_PID" 2>/dev/null || true
 # Wait for graceful shutdown (OTEL batch flush)
 wait "$DAEMON_PID" 2>/dev/null || true
 
-echo "[guest] Done — forcing immediate power off"
-poweroff -f
+echo "[guest] Done"

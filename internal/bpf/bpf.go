@@ -64,6 +64,8 @@ func (e *Event) TCPData() *TCPEventData {
 type ProcessEventData struct {
 	ExitCode uint32
 	Comm     [16]byte
+	IsContainerInit uint32 // 1 if PID 1 in a non-root PID namespace
+	NsLevel         uint32 // PID namespace nesting level (0 = root)
 }
 
 // TCPEventData matches the tcp struct in the C union.

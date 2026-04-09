@@ -43,31 +43,65 @@ func TestFilterEngine_MatchingScenarios(t *testing.T) {
 	})
 
 	// Exact match
-	r := engine.Match("make")
+	r := engine.Match("make", false)
 	require.NotNil(t, r)
 	assert.Equal(t, "builds", r.Name)
 
 	// Glob match
-	r = engine.Match("deploy-staging")
+	r = engine.Match("deploy-staging", false)
 	require.NotNil(t, r)
 	assert.Equal(t, "deploys", r.Name)
 
 	// Kernel comm is null-padded to 16 bytes
-	r = engine.Match("bash\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00")
+	r = engine.Match("bash\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00", false)
 	require.NotNil(t, r)
 	assert.Equal(t, "shells", r.Name)
 
 	// No match
-	assert.Nil(t, engine.Match("python"))
+	assert.Nil(t, engine.Match("python", false))
 
 	// First-match wins: if a comm matched two rules, we get the first
 	engine2 := NewFilterEngine([]config.AmbientRule{
 		{Name: "first", Match: config.AmbientMatch{Command: "make*"}},
 		{Name: "second", Match: config.AmbientMatch{Command: "make"}},
 	})
-	r = engine2.Match("make")
+	r = engine2.Match("make", false)
 	require.NotNil(t, r)
 	assert.Equal(t, "first", r.Name)
+}
+
+func TestFilterEngine_ContainerInit(t *testing.T) {
+	engine := NewFilterEngine([]config.AmbientRule{
+		{Name: "containers", Match: config.AmbientMatch{IsContainerInit: true}},
+	})
+
+	// Container init matches
+	r := engine.Match("bash", true)
+	require.NotNil(t, r)
+	assert.Equal(t, "containers", r.Name)
+
+	// Non-container-init does not match
+	assert.Nil(t, engine.Match("bash", false))
+}
+
+func TestFilterEngine_CombinedCommandAndContainerInit(t *testing.T) {
+	engine := NewFilterEngine([]config.AmbientRule{
+		{Name: "container-bash", Match: config.AmbientMatch{
+			Command:         "bash",
+			IsContainerInit: true,
+		}},
+	})
+
+	// Both conditions met
+	r := engine.Match("bash", true)
+	require.NotNil(t, r)
+	assert.Equal(t, "container-bash", r.Name)
+
+	// Command matches but not container init
+	assert.Nil(t, engine.Match("bash", false))
+
+	// Container init but wrong command
+	assert.Nil(t, engine.Match("sh", true))
 }
 
 // --- SessionManager ---

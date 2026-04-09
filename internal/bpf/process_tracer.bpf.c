@@ -436,6 +436,16 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     bpf_get_current_comm(&e->data.proc.comm, sizeof(e->data.proc.comm));
     e->data.proc.exit_code = 0;
 
+    /* Read namespace-local PID for container init detection.
+     * Instead of indexing thread_pid->numbers[level] (variable offset),
+     * compare against pid_ns->child_reaper which is always PID 1's task. */
+    {
+        struct pid_namespace *pid_ns = bpf_core_cast(task, struct task_struct)->nsproxy->pid_ns_for_children;
+        unsigned int level = bpf_core_cast(pid_ns, struct pid_namespace)->level;
+        e->data.proc.ns_level = level;
+        e->data.proc.is_container_init = (level > 0 && bpf_core_cast(pid_ns, struct pid_namespace)->child_reaper == task) ? 1 : 0;
+    }
+
     bpf_ringbuf_submit(e, 0);
 
     /* Clean up the inflight_execve marker if it exists

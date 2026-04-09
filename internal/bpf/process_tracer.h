@@ -26,6 +26,8 @@ struct event {
         struct {
             __u32 exit_code;
             char comm[TASK_COMM_LEN];
+            __u32 is_container_init;   // 1 if PID 1 in a non-root PID namespace
+            __u32 ns_level;            // PID namespace nesting level (0 = root)
         } proc;
 
         // TCP event fields

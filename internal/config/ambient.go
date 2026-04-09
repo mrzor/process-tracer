@@ -25,8 +25,11 @@ type AmbientRule struct {
 }
 
 // AmbientMatch defines the criteria for matching a process.
+// At least one of Command or IsContainerInit must be set.
+// When both are set, both must match.
 type AmbientMatch struct {
-	Command string `yaml:"command"` // glob pattern matched against comm (16-char kernel name)
+	Command         string `yaml:"command"`           // glob pattern matched against comm (16-char kernel name)
+	IsContainerInit bool   `yaml:"is_container_init"` // match processes that are PID 1 in a non-root PID namespace
 }
 
 // AmbientLimits defines resource limits for the daemon.
@@ -84,8 +87,8 @@ func (c *AmbientConfig) validate() error {
 		if r.Name == "" {
 			return fmt.Errorf("rule %d: name is required", i)
 		}
-		if r.Match.Command == "" {
-			return fmt.Errorf("rule %q: match.command is required", r.Name)
+		if r.Match.Command == "" && !r.Match.IsContainerInit {
+			return fmt.Errorf("rule %q: at least one of match.command or match.is_container_init is required", r.Name)
 		}
 	}
 	if c.Limits.MaxTotalPIDs > 10240 {

@@ -143,7 +143,7 @@ func (p *Processor) handleExecCandidate(event *bpf.Event) error {
 	comm := string(procData.Comm[:])
 
 	// Match against rules
-	rule := p.filter.Match(comm)
+	rule := p.filter.Match(comm, procData.IsContainerInit == 1)
 	if rule == nil {
 		// No match - clean up any buffered env data
 		p.cleanupPending(pid)

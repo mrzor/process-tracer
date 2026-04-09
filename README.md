@@ -167,6 +167,58 @@ This can be handy if auto-detection gets confused (e.g. hardlinks instead of sym
 
 <!-- */AI SLOP* -->
 
+## Ambient Mode (Daemon)
+
+Instead of wrapping a single command, the daemon traces process trees system-wide based
+on configurable rules. It watches all `execve` calls via eBPF and starts a trace session
+when a process matches a rule. Children are tracked automatically.
+
+```bash
+sudo ./process-tracer-daemon config.yaml
+```
+
+### Configuration
+
+```yaml
+rules:
+  # Match by command name (glob, matched against the 16-char kernel comm)
+  - name: "builds"
+    match:
+      command: "make"
+    attributes:
+      service.name: "build"
+      build.id: 'expr:env["BUILD_ID"]'
+    trace_id: 'expr:env["BUILD_TRACE_ID"]'
+
+  # Match container init processes (PID 1 in a non-root PID namespace)
+  - name: "containers"
+    match:
+      is_container_init: true
+    attributes:
+      service.name: "container"
+
+  # Both conditions can be combined (both must match)
+  - name: "container-nginx"
+    match:
+      command: "nginx"
+      is_container_init: true
+
+otel:
+  endpoint: "http://collector:4318"
+  service_name: "my-daemon"
+
+limits:
+  max_concurrent_sessions: 100
+  max_pids_per_session: 1000
+  max_total_pids: 8000
+  session_timeout: 1h
+  ring_buffer_size: 8388608  # 8MB
+```
+
+Rules support the same `expr:` dynamic attributes, `trace_id`, and `parent_id` as CLI mode.
+At least one of `command` or `is_container_init` is required per rule. See
+`ambient.example.yaml` for a full example.
+
 ## Values and Expressions
 
 All values (`-a`, `-t`, `-p` and their env var equivalents) are **literal by default**.

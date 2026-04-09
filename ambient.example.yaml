@@ -15,6 +15,13 @@ rules:
     attributes:
       service.name: "build"
 
+  # Trace any container's init process (PID 1 in a non-root PID namespace)
+  - name: "containers"
+    match:
+      is_container_init: true
+    attributes:
+      service.name: "container"
+
   # Trace deploy scripts
   - name: "deployments"
     match:

@@ -19,21 +19,30 @@ func NewFilterEngine(rules []config.AmbientRule) *FilterEngine {
 	return &FilterEngine{rules: rules}
 }
 
-// Match evaluates a process's comm against all rules, returning the first match or nil.
+// Match evaluates a process against all rules, returning the first match or nil.
 // comm is the kernel process name (up to 16 chars, null-terminated).
-func (f *FilterEngine) Match(comm string) *config.AmbientRule {
+// isContainerInit indicates the process is PID 1 in a non-root PID namespace.
+func (f *FilterEngine) Match(comm string, isContainerInit bool) *config.AmbientRule {
 	// Trim null bytes from kernel comm
 	comm = strings.TrimRight(comm, "\x00")
 
 	for i := range f.rules {
 		r := &f.rules[i]
-		matched, err := filepath.Match(r.Match.Command, comm)
-		if err != nil {
-			continue // invalid pattern, skip rule
+
+		// Check command glob if configured
+		if r.Match.Command != "" {
+			matched, err := filepath.Match(r.Match.Command, comm)
+			if err != nil || !matched {
+				continue
+			}
 		}
-		if matched {
-			return r
+
+		// Check container init if configured
+		if r.Match.IsContainerInit && !isContainerInit {
+			continue
 		}
+
+		return r
 	}
 	return nil
 }

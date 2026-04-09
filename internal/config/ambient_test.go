@@ -98,12 +98,12 @@ rules:
 			want: "name is required",
 		},
 		{
-			name: "rule without command pattern",
+			name: "rule without any match criterion",
 			yaml: `
 rules:
   - name: "broken"
     match: {}`,
-			want: "match.command is required",
+			want: "at least one of match.command or match.is_container_init is required",
 		},
 		{
 			name: "total PIDs exceed BPF map",
@@ -126,6 +126,34 @@ limits:
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
+}
+
+func TestLoadAmbientConfig_ContainerInit(t *testing.T) {
+	yaml := `
+rules:
+  - name: "containers"
+    match:
+      is_container_init: true
+    attributes:
+      service.name: "container"
+  - name: "container-bash"
+    match:
+      command: "bash"
+      is_container_init: true
+`
+	path := writeTemp(t, yaml)
+	cfg, err := LoadAmbientConfig(path)
+	require.NoError(t, err)
+
+	require.Len(t, cfg.Rules, 2)
+
+	// is_container_init only (no command)
+	assert.Empty(t, cfg.Rules[0].Match.Command)
+	assert.True(t, cfg.Rules[0].Match.IsContainerInit)
+
+	// Both command and is_container_init
+	assert.Equal(t, "bash", cfg.Rules[1].Match.Command)
+	assert.True(t, cfg.Rules[1].Match.IsContainerInit)
 }
 
 func TestCustomAttributesForRule(t *testing.T) {

@@ -9,6 +9,16 @@ STAGING="$SCRIPT_DIR/staging"
 CACHE="$SCRIPT_DIR/.cache"
 TIMEOUT=300
 HTTP_PORT=9999
+REBUILD_BASE=false
+
+# --- Parse flags ---
+
+for arg in "$@"; do
+    case "$arg" in
+        --rebuild-base|--force-rebuild) REBUILD_BASE=true ;;
+        *) echo "Unknown flag: $arg"; exit 1 ;;
+    esac
+done
 
 # --- Colors (disabled if not a terminal) ---
 
@@ -52,6 +62,27 @@ if (( ${#missing[@]} > 0 )); then
     exit 1
 fi
 
+# --- Helper: detect KVM ---
+
+KVM_FLAG=""
+if [[ -w /dev/kvm ]]; then
+    KVM_FLAG="-enable-kvm"
+fi
+
+# --- Helper: create a cloud-init seed ISO ---
+
+make_seed_iso() {
+    local userdata="$1" output="$2" metadata="${3:-$SCRIPT_DIR/cloud-init-meta-data}"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    cp "$userdata" "$tmpdir/user-data"
+    cp "$metadata" "$tmpdir/meta-data"
+    "$ISO_CMD" -output "$output" -volid cidata -joliet -rock \
+        "$tmpdir/user-data" "$tmpdir/meta-data" \
+        2>/dev/null
+    rm -rf "$tmpdir"
+}
+
 # --- Cleanup on exit ---
 
 cleanup() {
@@ -69,6 +100,55 @@ trap cleanup EXIT
 # --- Fetch dependencies ---
 
 bash "$SCRIPT_DIR/fetch-deps.sh"
+
+# --- Prepare base image (bake make into upstream image) ---
+
+UPSTREAM="$CACHE/debian-13-genericcloud-amd64.qcow2"
+BASE_PREPARED="$CACHE/base-prepared.qcow2"
+
+if [[ "$REBUILD_BASE" == true ]] && [[ -f "$BASE_PREPARED" ]]; then
+    log "host/base" "Removing existing prepared image (--rebuild-base)"
+    rm -f "$BASE_PREPARED"
+fi
+
+if [[ ! -f "$BASE_PREPARED" ]]; then
+    log "host/base" "Preparing base image (installing make)..."
+
+    local_prep=$(mktemp -d)
+    trap "rm -rf $local_prep; $(trap -p EXIT | sed "s/.*'\\(.*\\)'.*/\\1/")" EXIT
+
+    # Create a temporary overlay for the preparation boot
+    qemu-img create -f qcow2 -b "$UPSTREAM" -F qcow2 "$local_prep/prep-overlay.qcow2" >/dev/null
+    make_seed_iso "$SCRIPT_DIR/cloud-init-prepare-data" "$local_prep/seed.iso" "$SCRIPT_DIR/cloud-init-prepare-meta-data"
+
+    # Stream serial output during base preparation
+    touch "$local_prep/serial.log"
+    tail -f "$local_prep/serial.log" | sed -u "s/^/  ${DIM}[host\/base]${RESET} /" &
+    PREP_TAIL_PID=$!
+
+    qemu-system-x86_64 \
+        -m 2048 -smp 2 $KVM_FLAG \
+        -display none \
+        -monitor none \
+        -drive file="$local_prep/prep-overlay.qcow2",format=qcow2 \
+        -drive file="$local_prep/seed.iso",format=raw \
+        -netdev user,id=net0 \
+        -device virtio-net-pci,netdev=net0 \
+        -serial file:"$local_prep/serial.log"
+
+    # Stop serial tail
+    kill "$PREP_TAIL_PID" 2>/dev/null || true
+    wait "$PREP_TAIL_PID" 2>/dev/null || true
+
+    # Flatten overlay into a standalone image
+    log "host/base" "Flattening prepared image..."
+    qemu-img convert -O qcow2 "$local_prep/prep-overlay.qcow2" "$BASE_PREPARED"
+    rm -rf "$local_prep"
+
+    ok "host/base" "Base image ready ($(stat -c%s "$BASE_PREPARED" 2>/dev/null | awk '{printf "%.0f MB", $1/1048576}')"
+else
+    ok "host/base" "Prepared image cached"
+fi
 
 # --- Build daemon ---
 
@@ -110,28 +190,21 @@ for i in $(seq 1 15); do
 done
 
 # --- Create cloud-init seed ISO ---
-# NoCloud datasource expects files named exactly "user-data" and "meta-data"
 
 log "host/iso" "Creating cloud-init seed ISO..."
-cp "$SCRIPT_DIR/cloud-init-user-data" "$STAGING/user-data"
-cp "$SCRIPT_DIR/cloud-init-meta-data" "$STAGING/meta-data"
-"$ISO_CMD" -output "$STAGING/seed.iso" -volid cidata -joliet -rock \
-    "$STAGING/user-data" "$STAGING/meta-data" \
-    2>/dev/null
+make_seed_iso "$SCRIPT_DIR/cloud-init-user-data" "$STAGING/seed.iso"
 
 # --- Create overlay qcow2 ---
 
-log "host/qcow" "Creating overlay from base image..."
+log "host/qcow" "Creating overlay from prepared base..."
 qemu-img create -f qcow2 \
-    -b "$CACHE/debian-13-genericcloud-amd64.qcow2" -F qcow2 \
+    -b "$BASE_PREPARED" -F qcow2 \
     "$STAGING/overlay.qcow2" \
     >/dev/null
 
 # --- Start QEMU ---
 
-KVM_FLAG=""
-if [[ -w /dev/kvm ]]; then
-    KVM_FLAG="-enable-kvm"
+if [[ -n "$KVM_FLAG" ]]; then
     ok "vm" "Starting QEMU (KVM enabled)"
 else
     warn "vm" "Starting QEMU without KVM (slow — /dev/kvm not writable)"

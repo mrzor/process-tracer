@@ -8,7 +8,7 @@ Host tools:
 
 - `qemu-system-x86_64`, `qemu-img`
 - `genisoimage`, `mkisofs`, or `xorrisofs` (any one)
-- `jq`, `python3`
+- `uv`, `python3`
 - `go` (1.24+)
 - `curl`
 

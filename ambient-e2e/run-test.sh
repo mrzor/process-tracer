@@ -13,7 +13,7 @@ HTTP_PORT=9999
 # --- Check host dependencies ---
 
 missing=()
-for cmd in qemu-system-x86_64 qemu-img jq go curl python3; do
+for cmd in qemu-system-x86_64 qemu-img uv go curl python3; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
 done
 
@@ -167,4 +167,4 @@ unset HTTP_PID
 # --- Verify traces ---
 
 echo ""
-bash "$SCRIPT_DIR/verify-traces.sh" "$STAGING/traces.jsonl"
+uv run --script "$SCRIPT_DIR/verify-traces.py" "$STAGING/traces.jsonl"

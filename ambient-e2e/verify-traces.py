@@ -152,6 +152,13 @@ class TestMakeSession:
         children = [s for s in make_spans if s.parent_span_id == root.span_id]
         assert len(children) >= 2, f"expected >= 2 direct children, got {len(children)}"
 
+    def test_env_attributes(self, make_spans):
+        for s in make_spans:
+            assert s.attrs.get("build.id") == "make-run-42", \
+                f"span {s.span_id} build.id={s.attrs.get('build.id')}"
+            assert s.attrs.get("build.region") == "us-east-1", \
+                f"span {s.span_id} build.region={s.attrs.get('build.region')}"
+
     def test_sleep_duration(self, make_spans):
         durations = [
             int(s.attrs.get("process.duration_ns", 0))
@@ -178,6 +185,13 @@ class TestPerlSession:
     def test_single_trace_id(self, perl_spans):
         ids = set(s.trace_id for s in perl_spans)
         assert len(ids) == 1, f"found {len(ids)} traceIds: {ids}"
+
+    def test_env_attributes(self, perl_spans):
+        for s in perl_spans:
+            assert s.attrs.get("job.id") == "perl-job-99", \
+                f"span {s.span_id} job.id={s.attrs.get('job.id')}"
+            assert s.attrs.get("job.tier") == "critical", \
+                f"span {s.span_id} job.tier={s.attrs.get('job.tier')}"
 
     def test_has_children(self, perl_spans):
         root = _root_span(perl_spans)

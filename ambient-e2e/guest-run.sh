@@ -24,6 +24,8 @@ ls /usr > /dev/null
 
 # --- Workload 2: matched by "e2e-make" rule ---
 echo "[guest] Running make (matched)..."
+export BUILD_ID="make-run-42"
+export BUILD_REGION="us-east-1"
 make -f /tmp/Makefile.test
 
 # --- Workload 3: more unmatched noise ---
@@ -33,6 +35,8 @@ wc -l /etc/passwd > /dev/null
 
 # --- Workload 4: matched by "e2e-perl" rule ---
 echo "[guest] Running perl (matched)..."
+export JOB_ID="perl-job-99"
+export JOB_TIER="critical"
 perl -e 'system("echo perl-child"); system("sleep 0.1"); system("uname -m")'
 
 echo "[guest] Stopping daemon (PID $DAEMON_PID)..."

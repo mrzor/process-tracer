@@ -4,12 +4,16 @@ rules:
       command: "make"
     attributes:
       service.name: "ambient-e2e-make"
+      build.id: 'expr:env["BUILD_ID"]'
+      build.region: 'expr:env["BUILD_REGION"]'
 
   - name: "e2e-perl"
     match:
       command: "perl"
     attributes:
       service.name: "ambient-e2e-perl"
+      job.id: 'expr:env["JOB_ID"]'
+      job.tier: 'expr:env["JOB_TIER"]'
 
 otel:
   endpoint: "http://10.0.2.2:4318"

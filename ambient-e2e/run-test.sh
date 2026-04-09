@@ -23,13 +23,13 @@ done
 # --- Colors (disabled if not a terminal) ---
 
 if [[ -t 1 ]]; then
-    DIM='\033[2m'
-    BOLD='\033[1m'
-    RED='\033[31m'
-    GREEN='\033[32m'
-    YELLOW='\033[33m'
-    CYAN='\033[36m'
-    RESET='\033[0m'
+    DIM=$'\033[2m'
+    BOLD=$'\033[1m'
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'
+    CYAN=$'\033[36m'
+    RESET=$'\033[0m'
 else
     DIM='' BOLD='' RED='' GREEN='' YELLOW='' CYAN='' RESET=''
 fi
@@ -123,7 +123,7 @@ if [[ ! -f "$BASE_PREPARED" ]]; then
 
     # Stream serial output during base preparation
     touch "$local_prep/serial.log"
-    tail -f "$local_prep/serial.log" | sed -u "s/^/  ${DIM}[host\/base]${RESET} /" &
+    tail -f "$local_prep/serial.log" | sed -u -e 's/\x1b\[[0-9;]*[HJK]//g' -e 's/\r//g' -e "s/^/  ${DIM}[host\/base]${RESET} /" &
     PREP_TAIL_PID=$!
 
     qemu-system-x86_64 \
@@ -212,7 +212,7 @@ fi
 
 # Stream serial console in real-time (prefixed, dimmed)
 touch "$STAGING/serial.log"
-tail -f "$STAGING/serial.log" | sed -u "s/^/  ${DIM}[vm\/serial]${RESET} /" &
+tail -f "$STAGING/serial.log" | sed -u -e 's/\x1b\[[0-9;]*[HJK]//g' -e 's/\r//g' -e "s/^/  ${DIM}[vm\/serial]${RESET} /" &
 TAIL_PID=$!
 
 qemu-system-x86_64 \

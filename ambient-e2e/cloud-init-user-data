@@ -2,5 +2,4 @@
 runcmd:
   - curl -sf http://10.0.2.2:9999/guest-run.sh -o /tmp/guest-run.sh
   - chmod +x /tmp/guest-run.sh
-  - /bin/bash /tmp/guest-run.sh 2>&1
-  - poweroff
+  - /bin/bash /tmp/guest-run.sh > /dev/ttyS0 2>&1

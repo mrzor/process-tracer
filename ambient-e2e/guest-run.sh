@@ -43,4 +43,5 @@ kill -TERM "$DAEMON_PID" 2>/dev/null || true
 # Wait for graceful shutdown (OTEL batch flush)
 wait "$DAEMON_PID" 2>/dev/null || true
 
-echo "[guest] Done"
+echo "[guest] Done — forcing immediate power off"
+poweroff -f

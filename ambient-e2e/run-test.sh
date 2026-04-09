@@ -10,6 +10,25 @@ CACHE="$SCRIPT_DIR/.cache"
 TIMEOUT=300
 HTTP_PORT=9999
 
+# --- Colors (disabled if not a terminal) ---
+
+if [[ -t 1 ]]; then
+    DIM='\033[2m'
+    BOLD='\033[1m'
+    RED='\033[31m'
+    GREEN='\033[32m'
+    YELLOW='\033[33m'
+    CYAN='\033[36m'
+    RESET='\033[0m'
+else
+    DIM='' BOLD='' RED='' GREEN='' YELLOW='' CYAN='' RESET=''
+fi
+
+log()  { echo -e "${DIM}[$1]${RESET} $2"; }
+ok()   { echo -e "${GREEN}${BOLD}[$1]${RESET} $2"; }
+warn() { echo -e "${YELLOW}[$1]${RESET} $2"; }
+err()  { echo -e "${RED}${BOLD}[$1]${RESET} $2"; }
+
 # --- Check host dependencies ---
 
 missing=()
@@ -28,7 +47,7 @@ done
 [[ -z "$ISO_CMD" ]] && missing+=("genisoimage|mkisofs|xorrisofs")
 
 if (( ${#missing[@]} > 0 )); then
-    echo "ERROR: Missing required tools: ${missing[*]}"
+    err "deps" "Missing required tools: ${missing[*]}"
     echo "Install them and retry."
     exit 1
 fi
@@ -36,7 +55,7 @@ fi
 # --- Cleanup on exit ---
 
 cleanup() {
-    local pids=("${HTTP_PID:-}" "${OTELCOL_PID:-}" "${QEMU_PID:-}")
+    local pids=("${TAIL_PID:-}" "${HTTP_PID:-}" "${OTELCOL_PID:-}" "${QEMU_PID:-}")
     for pid in "${pids[@]}"; do
         if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null || true
@@ -53,10 +72,10 @@ bash "$SCRIPT_DIR/fetch-deps.sh"
 
 # --- Build daemon ---
 
-echo "[build] Building process-tracer-daemon..."
+log "host/build" "Compiling process-tracer-daemon (linux/amd64, static)..."
 mkdir -p "$STAGING"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$STAGING/process-tracer-daemon" "$PROJECT_ROOT/cmd/process-tracer-daemon"
-echo "[build] Done"
+ok "host/build" "Done"
 
 # --- Stage files ---
 
@@ -66,25 +85,25 @@ cp "$SCRIPT_DIR/ambient-test.yaml" "$STAGING/"
 
 # --- Start HTTP server (serves staging/ to VM) ---
 
-echo "[http] Starting file server on :${HTTP_PORT}..."
+log "host/http" "File server on :${HTTP_PORT}"
 python3 -m http.server "$HTTP_PORT" -d "$STAGING" &>/dev/null &
 HTTP_PID=$!
 
 # --- Start OTLP collector on host ---
 
-echo "[otel] Starting otelcol-contrib on host..."
+log "host/otel" "Starting otelcol-contrib..."
 "$CACHE/otelcol-contrib" --config "$SCRIPT_DIR/otelcol.yaml" &>/dev/null &
 OTELCOL_PID=$!
 
-# Wait for collector to be ready (OTLP endpoint returns 405 for GET)
+# Wait for collector to be ready
 for i in $(seq 1 15); do
     HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' http://localhost:4318/ 2>/dev/null || true)
     if [[ "$HTTP_CODE" =~ ^(200|404|405)$ ]]; then
-        echo "[otel] Collector ready after ${i}s"
+        ok "host/otel" "Collector ready (${i}s)"
         break
     fi
     if (( i == 15 )); then
-        echo "[otel] ERROR: collector not ready after 15s"
+        err "host/otel" "Collector not ready after 15s"
         exit 1
     fi
     sleep 1
@@ -93,16 +112,16 @@ done
 # --- Create cloud-init seed ISO ---
 # NoCloud datasource expects files named exactly "user-data" and "meta-data"
 
-echo "[iso] Creating seed ISO..."
+log "host/iso" "Creating cloud-init seed ISO..."
 cp "$SCRIPT_DIR/cloud-init-user-data" "$STAGING/user-data"
 cp "$SCRIPT_DIR/cloud-init-meta-data" "$STAGING/meta-data"
 "$ISO_CMD" -output "$STAGING/seed.iso" -volid cidata -joliet -rock \
     "$STAGING/user-data" "$STAGING/meta-data" \
     2>/dev/null
-echo "[iso] Done"
 
 # --- Create overlay qcow2 ---
 
+log "host/qcow" "Creating overlay from base image..."
 qemu-img create -f qcow2 \
     -b "$CACHE/debian-13-genericcloud-amd64.qcow2" -F qcow2 \
     "$STAGING/overlay.qcow2" \
@@ -113,11 +132,15 @@ qemu-img create -f qcow2 \
 KVM_FLAG=""
 if [[ -w /dev/kvm ]]; then
     KVM_FLAG="-enable-kvm"
-    echo "[vm] Starting QEMU (KVM enabled)..."
+    ok "vm" "Starting QEMU (KVM enabled)"
 else
-    echo "[vm] WARNING: /dev/kvm not available, running without KVM (slow)"
-    echo "[vm] Starting QEMU..."
+    warn "vm" "Starting QEMU without KVM (slow — /dev/kvm not writable)"
 fi
+
+# Stream serial console in real-time (prefixed, dimmed)
+touch "$STAGING/serial.log"
+tail -f "$STAGING/serial.log" | sed -u "s/^/  ${DIM}[vm\/serial]${RESET} /" &
+TAIL_PID=$!
 
 qemu-system-x86_64 \
     -m 2048 -smp 2 $KVM_FLAG \
@@ -132,14 +155,11 @@ QEMU_PID=$!
 
 # --- Wait for VM to finish ---
 
-echo "[vm] Waiting for VM (timeout ${TIMEOUT}s, PID $QEMU_PID)..."
+log "vm" "Waiting (timeout ${TIMEOUT}s)..."
 SECONDS=0
 while kill -0 "$QEMU_PID" 2>/dev/null; do
     if (( SECONDS >= TIMEOUT )); then
-        echo "[vm] ERROR: VM timed out after ${TIMEOUT}s"
-        echo ""
-        echo "=== Last 30 lines of serial.log ==="
-        tail -30 "$STAGING/serial.log" 2>/dev/null || echo "(no serial log)"
+        err "vm" "Timed out after ${TIMEOUT}s"
         exit 1
     fi
     sleep 2
@@ -147,7 +167,13 @@ done
 
 wait "$QEMU_PID" 2>/dev/null || true
 unset QEMU_PID
-echo "[vm] VM completed in ${SECONDS}s"
+
+# Stop serial tail
+kill "$TAIL_PID" 2>/dev/null || true
+wait "$TAIL_PID" 2>/dev/null || true
+unset TAIL_PID
+
+ok "vm" "Completed in ${SECONDS}s"
 
 # --- Give collector a moment to flush ---
 
@@ -155,7 +181,7 @@ sleep 2
 
 # --- Stop host services ---
 
-echo "[otel] Stopping collector..."
+log "host/otel" "Stopping collector"
 kill -TERM "$OTELCOL_PID" 2>/dev/null || true
 wait "$OTELCOL_PID" 2>/dev/null || true
 unset OTELCOL_PID

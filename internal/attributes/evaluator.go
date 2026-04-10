@@ -29,14 +29,16 @@ func ParseExprPrefix(s string) (body string, isExpr bool) {
 // Values without the "expr:" prefix are used as literal strings.
 // Values with the "expr:" prefix are compiled and evaluated at runtime.
 type Evaluator struct {
-	customAttrs   []config.CustomAttribute
-	compiledExprs []*vm.Program // nil entry = literal value
+	customAttrs     []config.CustomAttribute
+	compiledExprs   []*vm.Program // nil entry = literal value
+	skipEmptyValues bool
 }
 
 // NewEvaluator creates a new attribute evaluator.
 // Literal values (no "expr:" prefix) are stored as-is.
 // Expressions ("expr:" prefix) are pre-compiled; invalid ones are warned and skipped.
-func NewEvaluator(customAttrs []config.CustomAttribute) (*Evaluator, error) {
+// When skipEmptyValues is true, attributes that evaluate to an empty string are omitted from the result.
+func NewEvaluator(customAttrs []config.CustomAttribute, skipEmptyValues bool) (*Evaluator, error) {
 	exprEnv := map[string]interface{}{
 		"env":     map[string]string{},
 		"args":    []string{},
@@ -65,8 +67,9 @@ func NewEvaluator(customAttrs []config.CustomAttribute) (*Evaluator, error) {
 	}
 
 	return &Evaluator{
-		customAttrs:   validAttrs,
-		compiledExprs: compiledExprs,
+		customAttrs:     validAttrs,
+		compiledExprs:   compiledExprs,
+		skipEmptyValues: skipEmptyValues,
 	}, nil
 }
 
@@ -93,6 +96,9 @@ func (e *Evaluator) EvaluateCustomAttributes(metadata *procmeta.ProcessMetadata)
 
 		if program == nil {
 			// Literal value — use the raw expression string (without prefix)
+			if e.skipEmptyValues && customAttr.Expression == "" {
+				continue
+			}
 			attrs = append(attrs, attribute.String(customAttr.Name, customAttr.Expression))
 			continue
 		}
@@ -100,6 +106,10 @@ func (e *Evaluator) EvaluateCustomAttributes(metadata *procmeta.ProcessMetadata)
 		output, err := expr.Run(program, env)
 		if err != nil {
 			log.Printf("Warning: failed to evaluate expression for attribute %q: %v", customAttr.Name, err)
+			continue
+		}
+
+		if e.skipEmptyValues && fmt.Sprint(output) == "" {
 			continue
 		}
 

@@ -86,6 +86,7 @@ func (m *SessionManager) CreateSession(pid uint32, rule *config.AmbientRule, met
 		m.resolver,
 		m.metadataManager,
 		customAttrs,
+		rule.SkipEmptyValues,
 		rule.TraceID,
 		rule.ParentID,
 	)

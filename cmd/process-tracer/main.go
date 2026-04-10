@@ -136,6 +136,7 @@ func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader
 		resolver,
 		metadataManager,
 		cfg.CustomAttributes,
+		cfg.SkipEmptyValues,
 		cfg.TraceID,
 		cfg.ParentID,
 	)

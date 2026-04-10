@@ -56,11 +56,12 @@ func NewOTELFormatter(
 	resolver *reversedns.Resolver,
 	metadataManager *procmeta.Manager,
 	customAttrs []config.CustomAttribute,
+	skipEmptyValues bool,
 	traceIDExpr string,
 	parentIDExpr string,
 ) (*OTELFormatter, error) {
 	// Create attribute evaluator
-	attrEvaluator, err := attributes.NewEvaluator(customAttrs)
+	attrEvaluator, err := attributes.NewEvaluator(customAttrs, skipEmptyValues)
 	if err != nil {
 		return nil, err
 	}

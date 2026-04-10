@@ -26,6 +26,10 @@ rules:
   - name: "deployments"
     match:
       command: "deploy-*"
+    # skip_empty_values: when true, attributes that evaluate to "" are omitted
+    # from spans. Useful when some env vars are only present conditionally
+    # (e.g. CI merge-request variables, deploy environment names).
+    skip_empty_values: true
     attributes:
       service.name: "deployment"
       deploy.env: 'expr:env["DEPLOY_ENV"]'

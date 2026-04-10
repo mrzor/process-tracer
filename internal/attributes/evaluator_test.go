@@ -43,7 +43,7 @@ func TestEvaluator_LiteralValues(t *testing.T) {
 		{Name: "with-dashes", Expression: "unknown-unknown-ci"},
 	}
 
-	evaluator, err := NewEvaluator(attrs)
+	evaluator, err := NewEvaluator(attrs, false)
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
@@ -86,7 +86,7 @@ func TestEvaluator_ExprValues(t *testing.T) {
 		{Name: "arg.first", Expression: `expr:args[0]`},
 	}
 
-	evaluator, err := NewEvaluator(attrs)
+	evaluator, err := NewEvaluator(attrs, false)
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
@@ -121,7 +121,7 @@ func TestEvaluator_MixedLiteralAndExpr(t *testing.T) {
 		{Name: "also.literal", Expression: "another-value"},
 	}
 
-	evaluator, err := NewEvaluator(attrs)
+	evaluator, err := NewEvaluator(attrs, false)
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
@@ -159,7 +159,7 @@ func TestEvaluator_ExprInvalidExpression_WarnAndSkip(t *testing.T) {
 		{Name: "also.good", Expression: "literal-value"},
 	}
 
-	evaluator, err := NewEvaluator(attrs)
+	evaluator, err := NewEvaluator(attrs, false)
 	if err != nil {
 		t.Fatalf("NewEvaluator() should not abort on bad expression, got: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestEvaluator_MapExpansion(t *testing.T) {
 		{Name: "expanded", Expression: `expr:env`},
 	}
 
-	evaluator, err := NewEvaluator(attrs)
+	evaluator, err := NewEvaluator(attrs, false)
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
@@ -226,7 +226,7 @@ func TestEvaluator_ExprMissingKey(t *testing.T) {
 		{Name: "missing", Expression: `expr:env["MISSING"]`},
 	}
 
-	evaluator, err := NewEvaluator(attrs)
+	evaluator, err := NewEvaluator(attrs, false)
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
@@ -258,7 +258,7 @@ func TestEvaluator_NilMetadata(t *testing.T) {
 		{Name: "test", Expression: `expr:env["FOO"]`},
 	}
 
-	evaluator, err := NewEvaluator(attrs)
+	evaluator, err := NewEvaluator(attrs, false)
 	if err != nil {
 		t.Fatalf("NewEvaluator() error = %v", err)
 	}
@@ -270,6 +270,74 @@ func TestEvaluator_NilMetadata(t *testing.T) {
 
 	if result != nil {
 		t.Error("Expected nil result for nil metadata")
+	}
+}
+
+func TestEvaluator_SkipEmptyValues(t *testing.T) {
+	attrs := []config.CustomAttribute{
+		{Name: "has.value", Expression: `expr:env["EXISTS"]`},
+		{Name: "is.empty", Expression: `expr:env["MISSING"]`},
+		{Name: "also.has.value", Expression: `expr:env["ALSO_EXISTS"]`},
+	}
+
+	evaluator, err := NewEvaluator(attrs, true)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
+
+	metadata := &procmeta.ProcessMetadata{
+		Environ:     map[string]string{"EXISTS": "value", "ALSO_EXISTS": "other"},
+		Args:        []string{},
+		CmdlineFull: "",
+	}
+
+	result, err := evaluator.EvaluateCustomAttributes(metadata)
+	if err != nil {
+		t.Fatalf("EvaluateCustomAttributes() error = %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 attributes (empty skipped), got %d", len(result))
+	}
+	if result[0].Value.AsString() != "value" {
+		t.Errorf("result[0].Value = %q, want value", result[0].Value.AsString())
+	}
+	if result[1].Value.AsString() != "other" {
+		t.Errorf("result[1].Value = %q, want other", result[1].Value.AsString())
+	}
+}
+
+func TestEvaluator_SkipEmptyValues_Literal(t *testing.T) {
+	attrs := []config.CustomAttribute{
+		{Name: "non.empty", Expression: "hello"},
+		{Name: "empty", Expression: ""},
+		{Name: "also.non.empty", Expression: "world"},
+	}
+
+	evaluator, err := NewEvaluator(attrs, true)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
+
+	metadata := &procmeta.ProcessMetadata{
+		Environ:     map[string]string{},
+		Args:        []string{},
+		CmdlineFull: "",
+	}
+
+	result, err := evaluator.EvaluateCustomAttributes(metadata)
+	if err != nil {
+		t.Fatalf("EvaluateCustomAttributes() error = %v", err)
+	}
+
+	if len(result) != 2 {
+		t.Fatalf("Expected 2 attributes (empty literal skipped), got %d", len(result))
+	}
+	if result[0].Value.AsString() != "hello" {
+		t.Errorf("result[0].Value = %q, want hello", result[0].Value.AsString())
+	}
+	if result[1].Value.AsString() != "world" {
+		t.Errorf("result[1].Value = %q, want world", result[1].Value.AsString())
 	}
 }
 

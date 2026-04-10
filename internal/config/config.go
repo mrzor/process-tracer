@@ -39,6 +39,8 @@ type Config struct {
 	ParentID string
 	// CustomAttributes are user-defined span attributes (literal or expr:-prefixed values)
 	CustomAttributes []CustomAttribute
+	// SkipEmptyValues omits custom attributes whose value evaluates to an empty string
+	SkipEmptyValues bool
 }
 
 // EnvConfig holds process-tracer configuration from environment variables.
@@ -342,6 +344,7 @@ func ParseConfig(args []string, licenseText string, version, commit, buildDate s
 func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, version, commit, buildDate string) (*Config, error) {
 	var traceID string
 	var parentID string
+	var skipEmptyValues bool
 	var customAttrs []CustomAttribute
 	var attrArgs []string
 	var resultCfg *Config
@@ -398,6 +401,11 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 				Usage:       "Add custom span attribute as NAME=VALUE or NAME=expr:EXPRESSION (repeatable)",
 				Destination: &attrArgs,
 			},
+			&cli.BoolFlag{
+				Name:        "skip-empty-values",
+				Usage:       "Omit custom attributes whose value evaluates to an empty string",
+				Destination: &skipEmptyValues,
+			},
 		},
 		UseShortOptionHandling: true,
 		Action: func(_ context.Context, cmd *cli.Command) error {
@@ -442,6 +450,7 @@ func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, versi
 				TraceID:          finalTraceID,
 				ParentID:         finalParentID,
 				CustomAttributes: finalAttrs,
+				SkipEmptyValues:  skipEmptyValues,
 			}
 
 			return nil

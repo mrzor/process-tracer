@@ -62,6 +62,9 @@ sudo mise setcap
 # Mix literal and dynamic
 ./process-tracer -a team=platform -a region='expr:env["AWS_REGION"]' -- command ...
 
+# Skip attributes that evaluate to empty strings (useful with conditional env vars)
+./process-tracer --skip-empty-values -a deploy.env='expr:env["DEPLOY_ENV"]' -- command ...
+
 # Show help
 ./process-tracer --help
 ```
@@ -216,8 +219,13 @@ limits:
 ```
 
 Rules support the same `expr:` dynamic attributes, `trace_id`, and `parent_id` as CLI mode.
-At least one of `command` or `is_container_init` is required per rule. See
-`ambient.example.yaml` for a full example.
+At least one of `command` or `is_container_init` is required per rule.
+
+Setting `skip_empty_values: true` on a rule omits any attribute whose value evaluates to an
+empty string. This is the ambient equivalent of `--skip-empty-values` in direct mode, and is
+useful when some environment variables are only present conditionally (e.g. CI merge-request
+or deployment variables). See `ambient.example.yaml` and `ambient-gitlab-ci.example.yaml`
+for examples.
 
 ## Values and Expressions
 

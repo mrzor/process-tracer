@@ -176,6 +176,30 @@ func TestCustomAttributesForRule(t *testing.T) {
 	assert.Equal(t, `expr:env["BUILD_ID"]`, byName["build.id"])
 }
 
+func TestLoadAmbientConfig_SkipEmptyValues(t *testing.T) {
+	yaml := `
+rules:
+  - name: "with-skip"
+    match:
+      command: "make"
+    skip_empty_values: true
+    attributes:
+      service.name: "ci"
+  - name: "without-skip"
+    match:
+      command: "echo"
+    attributes:
+      service.name: "test"
+`
+	path := writeTemp(t, yaml)
+	cfg, err := LoadAmbientConfig(path)
+	require.NoError(t, err)
+
+	require.Len(t, cfg.Rules, 2)
+	assert.True(t, cfg.Rules[0].SkipEmptyValues)
+	assert.False(t, cfg.Rules[1].SkipEmptyValues)
+}
+
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")

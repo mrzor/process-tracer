@@ -1,11 +1,11 @@
-# Example ambient mode configuration for process-tracer-daemon.
+# Example ambient mode configuration for process-tracer daemon.
 #
 # Usage:
-#   sudo ./process-tracer-daemon ambient.example.yaml
+#   sudo ./process-tracer daemon -c ambient.example.yaml
 #
 # Or via environment variable:
 #   export PROCESS_TRACER_DAEMON_CONFIG=ambient.example.yaml
-#   sudo ./process-tracer-daemon
+#   sudo ./process-tracer daemon
 
 rules:
   # Trace all make invocations

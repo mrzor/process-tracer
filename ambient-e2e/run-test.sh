@@ -152,9 +152,9 @@ fi
 
 # --- Build daemon ---
 
-log "host/build" "Compiling process-tracer-daemon (linux/amd64, static)..."
+log "host/build" "Compiling process-tracer (linux/amd64, static)..."
 mkdir -p "$STAGING"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$STAGING/process-tracer-daemon" "$PROJECT_ROOT/cmd/process-tracer-daemon"
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$STAGING/process-tracer" "$PROJECT_ROOT/cmd/process-tracer"
 ok "host/build" "Done"
 
 # --- Stage files ---

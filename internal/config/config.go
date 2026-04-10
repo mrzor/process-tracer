@@ -2,10 +2,8 @@
 package config
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -13,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/caarlos0/env/v11"
-	"github.com/urfave/cli/v3"
 )
 
 // CustomAttribute represents a custom span attribute.
@@ -61,10 +58,10 @@ func ParseEnvConfig() (*EnvConfig, error) {
 	return &cfg, nil
 }
 
-// parseAttribute parses a single "NAME=VALUE" string into a CustomAttribute.
+// ParseAttribute parses a single "NAME=VALUE" string into a CustomAttribute.
 // Returns the attribute and true on success, or zero value and false if invalid
 // (with a warning logged).
-func parseAttribute(s string) (CustomAttribute, bool) {
+func ParseAttribute(s string) (CustomAttribute, bool) {
 	parts := strings.SplitN(s, "=", 2)
 	if len(parts) != 2 {
 		log.Printf("Warning: skipping attribute with invalid format %q (expected NAME=VALUE)", s)
@@ -101,7 +98,7 @@ func ParseAttributeString(attrStr string) ([]CustomAttribute, error) {
 		if pair == "" {
 			continue
 		}
-		if attr, ok := parseAttribute(pair); ok {
+		if attr, ok := ParseAttribute(pair); ok {
 			attrs = append(attrs, attr)
 		}
 	}
@@ -109,9 +106,9 @@ func ParseAttributeString(attrStr string) ([]CustomAttribute, error) {
 	return attrs, nil
 }
 
-// detectSymlinkMode determines if the binary is invoked via symlink.
+// DetectSymlinkMode determines if the binary is invoked via symlink.
 // Returns true if symlink mode should be used, false for direct CLI mode.
-func detectSymlinkMode(mode string) (bool, error) {
+func DetectSymlinkMode(mode string) (bool, error) {
 	// Check explicit override
 	switch mode {
 	case "direct":
@@ -283,9 +280,9 @@ func resolveShellBinary(symlinkName string, envOverride string) (string, error) 
 		basename, basename, basename, basename, basename, basename, basename, basename)
 }
 
-// parseSymlinkMode handles configuration when invoked via symlink.
+// ParseSymlinkMode handles configuration when invoked via symlink.
 // Resolves the actual shell binary and passes all args to it.
-func parseSymlinkMode(args []string, envCfg *EnvConfig) (*Config, error) {
+func ParseSymlinkMode(args []string, envCfg *EnvConfig) (*Config, error) {
 	symlinkName := args[0]
 
 	// Resolve shell binary
@@ -310,171 +307,43 @@ func parseSymlinkMode(args []string, envCfg *EnvConfig) (*Config, error) {
 	}, nil
 }
 
-// ParseArgs is the main entry point for configuration parsing.
-// It handles both symlink mode (env vars only) and direct mode (CLI + env vars).
-// Maintained for backward compatibility - new code should use ParseConfig.
-func ParseArgs(args []string, licenseText string, version, commit, buildDate string) (*Config, error) {
-	return ParseConfig(args, licenseText, version, commit, buildDate)
-}
-
-// ParseConfig is the unified configuration parser.
-// It handles both symlink mode (env vars only) and direct mode (CLI + env vars).
-func ParseConfig(args []string, licenseText string, version, commit, buildDate string) (*Config, error) {
-	// Parse environment configuration
-	envCfg, err := ParseEnvConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse environment config: %w", err)
+// BuildTraceConfig merges CLI-provided values with environment config to produce a Config.
+// CLI values take precedence over environment values.
+func BuildTraceConfig(envCfg *EnvConfig, traceID, parentID string, cliAttrs []CustomAttribute, skipEmptyValues bool, cmdArgs []string) (*Config, error) {
+	if len(cmdArgs) == 0 {
+		return nil, fmt.Errorf("no command specified")
 	}
 
-	// Detect invocation mode
-	isSymlinkMode, err := detectSymlinkMode(envCfg.Mode)
-	if err != nil {
-		return nil, err
+	// Merge with environment config (CLI overrides)
+	finalTraceID := traceID
+	if finalTraceID == "" {
+		finalTraceID = envCfg.TraceID
 	}
 
-	if isSymlinkMode {
-		return parseSymlinkMode(args, envCfg)
+	finalParentID := parentID
+	if finalParentID == "" {
+		finalParentID = envCfg.ParentID
 	}
 
-	return parseDirectMode(args, envCfg, licenseText, version, commit, buildDate)
-}
-
-// parseDirectMode handles configuration when invoked directly.
-// Parses CLI arguments and merges with environment variables (CLI overrides env).
-func parseDirectMode(args []string, envCfg *EnvConfig, licenseText string, version, commit, buildDate string) (*Config, error) {
-	var traceID string
-	var parentID string
-	var skipEmptyValues bool
-	var customAttrs []CustomAttribute
-	var attrArgs []string
-	var resultCfg *Config
-
-	app := &cli.Command{
-		Name:  "process-tracer",
-		Usage: "eBPF-based process and network tracer with OpenTelemetry span integration",
-		UsageText: "process-tracer [OPTIONS] -- COMMAND [ARGS...]\n\n" +
-			"   Use '--' to separate options from the command to trace.\n\n" +
-			"EXAMPLES:\n" +
-			"   process-tracer -- bash -c 'echo hello'\n" +
-			"   process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- ls -la\n" +
-			"   process-tracer -a service.name=my-service -- command args\n" +
-			"   process-tracer -a env_name='expr:env[\"ENVIRONMENT\"]' -- command args\n" +
-			"   process-tracer -a foo='expr:env[\"FOO\"]' -a bar=literal-val -- cmd",
-		Version: formatVersionString(version, commit, buildDate),
-		Flags: []cli.Flag{
-			&cli.BoolFlag{
-				Name:  "license",
-				Usage: "Display license information and exit",
-				Action: func(_ context.Context, _ *cli.Command, b bool) error {
-					if b {
-						fmt.Println(licenseText)
-						return cli.Exit("", 0)
-					}
-					return nil
-				},
-			},
-			&cli.StringFlag{
-				Name:    "trace-id",
-				Aliases: []string{"t"},
-				Usage:   "OpenTelemetry trace ID: literal hex string or expr:EXPRESSION (SDK auto-generates if not provided)",
-				Action: func(_ context.Context, _ *cli.Command, s string) error {
-					if s != "" {
-						traceID = s
-					}
-					return nil
-				},
-			},
-			&cli.StringFlag{
-				Name:    "parent-id",
-				Aliases: []string{"p"},
-				Usage:   "OpenTelemetry parent span ID: literal hex string or expr:EXPRESSION (null if not provided)",
-				Action: func(_ context.Context, _ *cli.Command, s string) error {
-					if s != "" {
-						parentID = s
-					}
-					return nil
-				},
-			},
-			&cli.StringSliceFlag{
-				Name:        "a",
-				Aliases:     []string{"attribute"},
-				Usage:       "Add custom span attribute as NAME=VALUE or NAME=expr:EXPRESSION (repeatable)",
-				Destination: &attrArgs,
-			},
-			&cli.BoolFlag{
-				Name:        "skip-empty-values",
-				Usage:       "Omit custom attributes whose value evaluates to an empty string",
-				Destination: &skipEmptyValues,
-			},
-		},
-		UseShortOptionHandling: true,
-		Action: func(_ context.Context, cmd *cli.Command) error {
-			// Parse custom attributes from -a flags
-			for _, attrStr := range attrArgs {
-				if attr, ok := parseAttribute(attrStr); ok {
-					customAttrs = append(customAttrs, attr)
-				}
-			}
-
-			// Get the command and its arguments
-			cmdArgs := cmd.Args().Slice()
-			if len(cmdArgs) == 0 {
-				return fmt.Errorf("no command specified\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer -a service.name=my-svc -- bash -c 'echo hello'")
-			}
-
-			// Merge with environment config (CLI overrides)
-			finalTraceID := traceID
-			if finalTraceID == "" {
-				finalTraceID = envCfg.TraceID
-			}
-
-			finalParentID := parentID
-			if finalParentID == "" {
-				finalParentID = envCfg.ParentID
-			}
-
-			// Parse env attributes and prepend (CLI attributes take precedence)
-			var finalAttrs []CustomAttribute
-			if envCfg.Attributes != "" {
-				envAttrs, err := ParseAttributeString(envCfg.Attributes)
-				if err != nil {
-					return err
-				}
-				finalAttrs = append(finalAttrs, envAttrs...)
-			}
-			finalAttrs = append(finalAttrs, customAttrs...)
-
-			resultCfg = &Config{
-				Command:          cmdArgs[0],
-				Args:             cmdArgs[1:],
-				TraceID:          finalTraceID,
-				ParentID:         finalParentID,
-				CustomAttributes: finalAttrs,
-				SkipEmptyValues:  skipEmptyValues,
-			}
-
-			return nil
-		},
-	}
-
-	// Run the app
-	err := app.Run(context.Background(), args)
-
-	// Handle early-exit flags (--help, --version, --license)
-	if err != nil {
-		var exitErr cli.ExitCoder
-		if errors.As(err, &exitErr) && exitErr.ExitCode() == 0 {
-			os.Exit(0)
+	// Parse env attributes and prepend (CLI attributes take precedence)
+	var finalAttrs []CustomAttribute
+	if envCfg.Attributes != "" {
+		envAttrs, err := ParseAttributeString(envCfg.Attributes)
+		if err != nil {
+			return nil, err
 		}
-		return nil, err
+		finalAttrs = append(finalAttrs, envAttrs...)
 	}
+	finalAttrs = append(finalAttrs, cliAttrs...)
 
-	if resultCfg == nil {
-		// --help or --version was displayed; exit cleanly
-		os.Exit(0)
-	}
-
-	return resultCfg, nil
+	return &Config{
+		Command:          cmdArgs[0],
+		Args:             cmdArgs[1:],
+		TraceID:          finalTraceID,
+		ParentID:         finalParentID,
+		CustomAttributes: finalAttrs,
+		SkipEmptyValues:  skipEmptyValues,
+	}, nil
 }
 
 // generateTraceID generates a random 128-bit trace ID as 32 hex chars.
@@ -492,8 +361,8 @@ func (c *Config) FullCommand() []string {
 	return append([]string{c.Command}, c.Args...)
 }
 
-// formatVersionString constructs a formatted version string from components.
-func formatVersionString(version, commit, date string) string {
+// FormatVersionString constructs a formatted version string from components.
+func FormatVersionString(version, commit, date string) string {
 	if version == "" || version == "dev" {
 		return "dev"
 	}

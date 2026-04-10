@@ -1,5 +1,3 @@
-// process-tracer-daemon is the ambient mode daemon that monitors all process execs
-// and traces matching process trees based on configurable rules.
 package main
 
 import (
@@ -20,57 +18,54 @@ import (
 	"github.com/mrzor/process-tracer/internal/procmeta"
 	"github.com/mrzor/process-tracer/internal/reversedns"
 	"github.com/mrzor/process-tracer/internal/timesync"
+	"github.com/urfave/cli/v3"
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Version information injected by GoReleaser at build time.
-var (
-	version = "dev"
-	commit  = "unknown"
-	date    = "unknown"
-)
+func daemonCommand() *cli.Command {
+	var configPath string
 
-func main() {
-	if err := run(); err != nil {
-		log.Fatalf("Error: %v", err)
+	return &cli.Command{
+		Name:  "daemon",
+		Usage: "Run as a daemon, tracing process trees system-wide based on configurable rules",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:        "config",
+				Aliases:     []string{"c"},
+				Usage:       "Path to the ambient mode YAML configuration file",
+				Destination: &configPath,
+				Sources:     cli.EnvVars("PROCESS_TRACER_DAEMON_CONFIG"),
+				Required:    true,
+			},
+		},
+		Action: func(_ context.Context, _ *cli.Command) error {
+			return runDaemon(configPath)
+		},
 	}
 }
 
-func run() error {
-	// Parse config file path from args or env
-	configPath := os.Getenv("PROCESS_TRACER_DAEMON_CONFIG")
-	if len(os.Args) > 1 {
-		configPath = os.Args[1]
-	}
-	if configPath == "" {
-		return fmt.Errorf("usage: %s <config.yaml>\n  or set PROCESS_TRACER_DAEMON_CONFIG", os.Args[0])
-	}
-
-	// Load ambient config
+func runDaemon(configPath string) error {
 	cfg, err := config.LoadAmbientConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
-	log.Printf("process-tracer-daemon %s (commit %s, built %s)", version, commit, date)
+	log.Printf("process-tracer daemon %s (commit %s, built %s)", version, commit, date)
 	log.Printf("loaded %d rules", len(cfg.Rules)) //nolint:gosec // integer from config, not tainted
 
-	// Initialize OTEL
 	versionInfo := fmt.Sprintf("%s (%s)", version, commit)
-	tracer, otelCleanup, err := setupOTEL(cfg, versionInfo)
+	tracer, otelCleanup, err := setupDaemonOTEL(cfg, versionInfo)
 	if err != nil {
 		return err
 	}
 	defer otelCleanup()
 
-	// Load BPF in ambient mode
-	loader, rd, bpfCleanup, err := setupBPF(cfg.Limits.RingBufferSize)
+	loader, rd, bpfCleanup, err := setupDaemonBPF(cfg.Limits.RingBufferSize)
 	if err != nil {
 		return err
 	}
 	defer bpfCleanup()
 
-	// Create shared components
 	converter, err := timesync.NewConverter()
 	if err != nil {
 		return fmt.Errorf("creating time converter: %w", err)
@@ -79,14 +74,12 @@ func run() error {
 	metadataManager := procmeta.NewManager()
 	resolver := reversedns.New()
 
-	// Create ambient mode components
 	filter := ambient.NewFilterEngine(cfg.Rules)
 	manager := ambient.NewSessionManager(
 		loader, tracer, converter, resolver, metadataManager, cfg.Limits,
 	)
 	processor := ambient.NewProcessor(filter, manager)
 
-	// Start event stream
 	stream := eventstream.New(rd, processor)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -97,10 +90,8 @@ func run() error {
 
 	log.Printf("daemon started, monitoring all process execs")
 
-	// Start periodic cleanup
 	go runPeriodicCleanup(ctx, manager, processor)
 
-	// Wait for shutdown signal
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
@@ -116,8 +107,7 @@ func run() error {
 	return nil
 }
 
-func setupOTEL(cfg *config.AmbientConfig, versionInfo string) (trace.Tracer, func(), error) {
-	// Apply OTEL overrides from config before parsing env
+func setupDaemonOTEL(cfg *config.AmbientConfig, versionInfo string) (trace.Tracer, func(), error) {
 	if cfg.OTEL.ServiceName != "" {
 		if err := os.Setenv("OTEL_SERVICE_NAME", cfg.OTEL.ServiceName); err != nil {
 			log.Printf("warning: failed to set OTEL_SERVICE_NAME: %v", err)
@@ -150,7 +140,7 @@ func setupOTEL(cfg *config.AmbientConfig, versionInfo string) (trace.Tracer, fun
 	return tp.Tracer("process-tracer-daemon"), cleanup, nil
 }
 
-func setupBPF(ringBufferSize int) (*bpfloader.Loader, *ringbuf.Reader, func(), error) {
+func setupDaemonBPF(ringBufferSize int) (*bpfloader.Loader, *ringbuf.Reader, func(), error) {
 	loader, err := bpfloader.NewWithOptions(bpfloader.LoaderOptions{
 		AmbientMode:    true,
 		RingBufferSize: ringBufferSize,

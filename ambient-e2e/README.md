@@ -1,6 +1,6 @@
 # Ambient Mode E2E Test
 
-Validates the ambient mode daemon (`process-tracer-daemon`) in an isolated QEMU VM. The daemon attaches eBPF probes to **all** execs system-wide, so running it untested on a workstation is risky — this test boots a throwaway Debian 13 VM instead.
+Validates the ambient mode daemon (`process-tracer daemon`) in an isolated QEMU VM. The daemon attaches eBPF probes to **all** execs system-wide, so running it untested on a workstation is risky — this test boots a throwaway Debian 13 VM instead.
 
 ## Prerequisites
 
@@ -25,7 +25,7 @@ First run downloads ~415 MB of dependencies (Debian cloud image + otelcol-contri
 
 ## What Happens
 
-1. **Host** builds a static `process-tracer-daemon` binary.
+1. **Host** builds a static `process-tracer` binary.
 2. **Host** stages files into `staging/` and starts an HTTP server + OTLP collector.
 3. **Host** boots a QEMU VM with a cloud-init ISO and copy-on-write overlay.
 4. **VM** (via cloud-init) installs `make`, downloads test files from the host HTTP server.

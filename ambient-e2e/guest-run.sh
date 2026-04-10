@@ -4,13 +4,13 @@ set -euo pipefail
 HOST="http://10.0.2.2:9999"
 
 echo "[guest] Downloading files from host..."
-curl -sf "$HOST/process-tracer-daemon" -o /tmp/process-tracer-daemon
+curl -sf "$HOST/process-tracer" -o /tmp/process-tracer
 curl -sf "$HOST/ambient-test.yaml" -o /tmp/ambient-test.yaml
 curl -sf "$HOST/Makefile.test" -o /tmp/Makefile.test
-chmod +x /tmp/process-tracer-daemon
+chmod +x /tmp/process-tracer
 
-echo "[guest] Starting process-tracer-daemon..."
-PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS=5000 /tmp/process-tracer-daemon /tmp/ambient-test.yaml &
+echo "[guest] Starting process-tracer daemon..."
+PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS=5000 /tmp/process-tracer daemon -c /tmp/ambient-test.yaml &
 DAEMON_PID=$!
 
 # Give eBPF probes time to attach

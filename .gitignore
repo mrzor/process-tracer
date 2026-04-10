@@ -5,8 +5,8 @@
 *.so
 *.dylib
 
-# Compiled Go binaries
-process-tracer
+# Compiled Go binary
+/process-tracer
 
 # Test binary, built with `go test -c`
 *.test
@@ -55,4 +55,3 @@ tmp/
 temp/
 
 test_sh
-process-tracer-daemon

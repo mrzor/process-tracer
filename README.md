@@ -2,14 +2,16 @@
 
 An eBPF-based process and network otel-tracer.
 
-The quality bar is MEH and it's unlikely to significantly improve.
-
 This has been largely vibe-coded [1]. If you distrust outputs from coding agents, you might
 want to read all the source-code. Alternatively, you're invited to try it: it mostly works.
 
 Process-level tracing is generally not done for a reason that eludes me, and I believe I
 need it, so here this is. The TCP thing is super rudimentary compared to any professional
 alternative.
+
+The tool ships in two flavors, a "direct" mode that starts a process tree and instruments it
+to generate spans, and an "ambiant" mode that consider every new program on a machine and
+instruments a subset of them.
 
 [1] This README was, however, written by an ape, as one would figure out from the lack of
 bullet points and surprising absence of emojis.
@@ -21,6 +23,7 @@ bullet points and surprising absence of emojis.
 - Rudimentary hackish pseudo reverse-DNS system
 - Custom span attributes (literal or dynamic via `expr:` prefix)
 - Beware: process environment variable count is limited, and values are truncated after 2048 bytes
+-
 
 ## Quick Start
 
@@ -31,39 +34,39 @@ git clone ... && mise go-build
 # Or just grab the latest build
 mise use ubi:mrzor/process-tracer@latest
 
-# Run
-sudo ./process-tracer -- command ...
+# Run (direct tracing mode)
+sudo ./process-tracer trace -- command ...
 
 # Alternative
 sudo mise setcap
-./process-tracer -- command ...
+./process-tracer trace -- command ...
 
 # Set trace_id (defaults to a random one)
-./process-tracer -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
+./process-tracer trace -t a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 -- command ...
 
 # Dynamic trace-id from environment (note the expr: prefix)
-./process-tracer -t 'expr:env["TRACE_ID"]' -- echo hello
+./process-tracer trace -t 'expr:env["TRACE_ID"]' -- echo hello
 
 # When the value is not a valid 32-char hex trace id, it gets SHA-256'd
-./process-tracer -t my-build-id-123 -- echo hello
+./process-tracer trace -t my-build-id-123 -- echo hello
 
 # Set parent_id (defaults to no parent id)
-./process-tracer -p 0123456789abcdef -- command ...
+./process-tracer trace -p 0123456789abcdef -- command ...
 
 # Dynamic parent-id from environment
-./process-tracer -p 'expr:env["PARENT_SPAN_ID"]' -- command ...
+./process-tracer trace -p 'expr:env["PARENT_SPAN_ID"]' -- command ...
 
 # Literal span attributes (the common case — no prefix needed)
-./process-tracer -a service.name=my-service -a env=production -- command ...
+./process-tracer trace -a service.name=my-service -a env=production -- command ...
 
 # Dynamic attributes via expr: prefix
-./process-tracer -a env_name='expr:env["ENVIRONMENT"]' -a pod='expr:env["POD_NAME"]' -- command ...
+./process-tracer trace -a env_name='expr:env["ENVIRONMENT"]' -a pod='expr:env["POD_NAME"]' -- command ...
 
 # Mix literal and dynamic
-./process-tracer -a team=platform -a region='expr:env["AWS_REGION"]' -- command ...
+./process-tracer trace -a team=platform -a region='expr:env["AWS_REGION"]' -- command ...
 
 # Skip attributes that evaluate to empty strings (useful with conditional env vars)
-./process-tracer --skip-empty-values -a deploy.env='expr:env["DEPLOY_ENV"]' -- command ...
+./process-tracer trace --skip-empty-values -a deploy.env='expr:env["DEPLOY_ENV"]' -- command ...
 
 # Show help
 ./process-tracer --help
@@ -74,7 +77,7 @@ sudo mise setcap
 A little shellscript is provided as a sample workload.
 - Assuming you got the `mise` setup fully done, and you have a build (either downloaded, or built on your own)
 - `otel-tui --http 8080` in a dedicated terminal
-- `./process-tracer -- ./sample-workload.sh`
+- `./process-tracer trace -- ./sample-workload.sh`
 - In OTel TUI, navigate to the single trace you should be able to see the produced spans as well as their attributes. 
 
 <!-- *AI SLOP* -->
@@ -177,7 +180,7 @@ on configurable rules. It watches all `execve` calls via eBPF and starts a trace
 when a process matches a rule. Children are tracked automatically.
 
 ```bash
-sudo ./process-tracer-daemon config.yaml
+sudo ./process-tracer daemon -c config.yaml
 ```
 
 ### Configuration

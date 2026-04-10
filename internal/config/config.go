@@ -107,7 +107,7 @@ func ParseAttributeString(attrStr string) ([]CustomAttribute, error) {
 }
 
 // DetectSymlinkMode determines if the binary is invoked via symlink.
-// Returns true if symlink mode should be used, false for direct CLI mode.
+// Returns true if symlink mode should be used, false for trace CLI mode.
 func DetectSymlinkMode(mode string) (bool, error) {
 	// Check explicit override
 	switch mode {
@@ -130,7 +130,7 @@ func DetectSymlinkMode(mode string) (bool, error) {
 
 	selfPath, err := os.Executable()
 	if err != nil {
-		return false, nil // Can't determine, assume direct mode
+		return false, nil // Can't determine, assume trace mode
 	}
 
 	argsPath := os.Args[0]
@@ -145,7 +145,7 @@ func DetectSymlinkMode(mode string) (bool, error) {
 	// Resolve symlinks for os.Args[0]
 	resolvedArgs, err := filepath.EvalSymlinks(argsPath)
 	if err != nil {
-		// Can't resolve, assume direct mode
+		// Can't resolve, assume trace mode
 		return false, nil
 	}
 

@@ -1,6 +1,6 @@
-# Ambient mode configuration for GitLab CI.
+# Daemon mode configuration for GitLab CI.
 #
-# Port of the direct-mode shell wrapper that sets CI/CD span attributes.
+# Port of the trace-mode shell wrapper that sets CI/CD span attributes.
 # Intended for use with is_container_init matching, so that all CI jobs
 # running as PID 1 in their container are automatically traced.
 #

@@ -11,7 +11,7 @@ import (
 	"github.com/mrzor/process-tracer/internal/procmeta"
 )
 
-// Processor routes BPF events to the appropriate trace sessions in ambient mode.
+// Processor routes BPF events to the appropriate trace sessions in daemon mode.
 // It implements the eventprocessor.EventHandler interface.
 type Processor struct {
 	filter  *FilterEngine
@@ -35,7 +35,7 @@ type pendingExitInfo struct {
 	receivedAt     time.Time
 }
 
-// NewProcessor creates a new ambient mode event processor.
+// NewProcessor creates a new daemon mode event processor.
 func NewProcessor(filter *FilterEngine, manager *SessionManager) *Processor {
 	return &Processor{
 		filter:               filter,

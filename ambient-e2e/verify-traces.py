@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["pytest"]
 # ///
-"""Verify OTLP trace output from the ambient mode E2E test.
+"""Verify OTLP trace output from the daemon mode E2E test.
 
 Run with: uv run --script verify-traces.py [traces.jsonl]
 Accepts pytest flags: uv run --script verify-traces.py -- -v

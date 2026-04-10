@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// AmbientConfig holds the configuration for ambient (daemon) mode.
+// AmbientConfig holds the configuration for daemon mode.
 type AmbientConfig struct {
 	Rules  []AmbientRule  `yaml:"rules"`
 	Limits AmbientLimits  `yaml:"limits"`
@@ -61,7 +61,7 @@ func ambientDefaults() AmbientConfig {
 	}
 }
 
-// LoadAmbientConfig loads and validates an ambient mode config from a YAML file.
+// LoadAmbientConfig loads and validates a daemon mode config from a YAML file.
 func LoadAmbientConfig(path string) (*AmbientConfig, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // config file path is intentionally user-provided
 	if err != nil {

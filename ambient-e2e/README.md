@@ -1,6 +1,6 @@
-# Ambient Mode E2E Test
+# E2E Tests
 
-Validates the ambient mode daemon (`process-tracer daemon`) in an isolated QEMU VM. The daemon attaches eBPF probes to **all** execs system-wide, so running it untested on a workstation is risky — this test boots a throwaway Debian 13 VM instead.
+Validates process-tracer in an isolated QEMU VM. Both daemon mode (`process-tracer daemon`) and trace mode (`process-tracer trace`) are supported. The daemon attaches eBPF probes to **all** execs system-wide, so running it untested on a workstation is risky — this test boots a throwaway Debian 13 VM instead.
 
 ## Prerequisites
 
@@ -18,7 +18,8 @@ KVM (`/dev/kvm` writable) is recommended but not required — without it the VM 
 
 ```bash
 cd ambient-e2e
-./run-test.sh
+./run-test.sh              # daemon mode (default)
+./run-test.sh --mode=trace # trace mode
 ```
 
 First run downloads ~415 MB of dependencies (Debian cloud image + otelcol-contrib) into `.cache/`, which is reused on subsequent runs.

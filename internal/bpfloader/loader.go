@@ -14,7 +14,7 @@ import (
 
 // LoaderOptions configures BPF program loading behavior.
 type LoaderOptions struct {
-	AmbientMode    bool // Enable ambient mode (monitor all execs, not just tracked trees)
+	AmbientMode    bool // Enable daemon mode (monitor all execs, not just tracked trees)
 	RingBufferSize int  // Ring buffer size in bytes (0 = default 2MB)
 }
 
@@ -41,14 +41,14 @@ func NewWithOptions(opts LoaderOptions) (*Loader, error) {
 	l := &Loader{}
 
 	if !opts.AmbientMode {
-		// Direct mode: simple path, no spec modifications needed
+		// Trace mode: simple path, no spec modifications needed
 		if err := bpf.LoadProcessTracerObjects(&l.objs, nil); err != nil {
 			return nil, fmt.Errorf("loading BPF objects: %w", err)
 		}
 		return l, nil
 	}
 
-	// Ambient mode: load spec first, modify variables, then load into kernel
+	// Daemon mode: load spec first, modify variables, then load into kernel
 	spec, err := bpf.LoadProcessTracerSpec()
 	if err != nil {
 		return nil, fmt.Errorf("loading BPF spec: %w", err)

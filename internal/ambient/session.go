@@ -9,7 +9,7 @@ import (
 	"github.com/mrzor/process-tracer/internal/procmeta"
 )
 
-// TraceSession represents a single traced process tree in ambient mode.
+// TraceSession represents a single traced process tree in daemon mode.
 type TraceSession struct {
 	ID        string
 	Rule      *config.AmbientRule

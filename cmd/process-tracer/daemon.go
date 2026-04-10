@@ -32,7 +32,7 @@ func daemonCommand() *cli.Command {
 			&cli.StringFlag{
 				Name:        "config",
 				Aliases:     []string{"c"},
-				Usage:       "Path to the ambient mode YAML configuration file",
+				Usage:       "Path to the daemon mode YAML configuration file",
 				Destination: &configPath,
 				Sources:     cli.EnvVars("PROCESS_TRACER_DAEMON_CONFIG"),
 				Required:    true,

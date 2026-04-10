@@ -10,12 +10,16 @@ CACHE="$SCRIPT_DIR/.cache"
 TIMEOUT=300
 HTTP_PORT=9999
 REBUILD_BASE=false
+MODE=daemon
 
 # --- Parse flags ---
 
 for arg in "$@"; do
     case "$arg" in
         --rebuild-base|--force-rebuild) REBUILD_BASE=true ;;
+        --mode=daemon) MODE=daemon ;;
+        --mode=trace) MODE=trace ;;
+        --mode=*) echo "Unknown mode: ${arg#--mode=} (must be daemon or trace)"; exit 1 ;;
         *) echo "Unknown flag: $arg"; exit 1 ;;
     esac
 done
@@ -150,7 +154,7 @@ else
     ok "host/base" "Prepared image cached"
 fi
 
-# --- Build daemon ---
+# --- Build process-tracer ---
 
 log "host/build" "Compiling process-tracer (linux/amd64, static)..."
 mkdir -p "$STAGING"
@@ -159,9 +163,13 @@ ok "host/build" "Done"
 
 # --- Stage files ---
 
-cp "$SCRIPT_DIR/guest-run.sh" "$STAGING/"
 cp "$SCRIPT_DIR/Makefile.test" "$STAGING/"
-cp "$SCRIPT_DIR/ambient-test.yaml" "$STAGING/"
+if [[ "$MODE" == "trace" ]]; then
+    cp "$SCRIPT_DIR/guest-run-trace.sh" "$STAGING/guest-run.sh"
+else
+    cp "$SCRIPT_DIR/guest-run.sh" "$STAGING/"
+    cp "$SCRIPT_DIR/ambient-test.yaml" "$STAGING/"
+fi
 
 # --- Start HTTP server (serves staging/ to VM) ---
 
@@ -266,4 +274,8 @@ unset HTTP_PID
 # --- Verify traces ---
 
 echo ""
-uv run --script "$SCRIPT_DIR/verify-traces.py" "$STAGING/traces.jsonl"
+if [[ "$MODE" == "trace" ]]; then
+    uv run --script "$SCRIPT_DIR/verify-traces-trace.py" "$STAGING/traces.jsonl"
+else
+    uv run --script "$SCRIPT_DIR/verify-traces.py" "$STAGING/traces.jsonl"
+fi

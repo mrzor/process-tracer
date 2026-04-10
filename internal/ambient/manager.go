@@ -20,7 +20,7 @@ type PIDTracker interface {
 	UntrackPID(pid int) error
 }
 
-// SessionManager manages the lifecycle of trace sessions in ambient mode.
+// SessionManager manages the lifecycle of trace sessions in daemon mode.
 type SessionManager struct {
 	loader          PIDTracker
 	tracer          trace.Tracer

@@ -1,4 +1,4 @@
-// Package ambient implements the ambient mode daemon that monitors all process
+// Package ambient implements the daemon mode that monitors all process
 // execs system-wide and traces matching process trees based on configurable rules.
 package ambient
 

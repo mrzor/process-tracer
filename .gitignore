@@ -7,6 +7,7 @@
 
 # Compiled Go binary
 /process-tracer
+/process-tracer-daemon
 
 # Test binary, built with `go test -c`
 *.test
@@ -55,3 +56,11 @@ tmp/
 temp/
 
 test_sh
+
+# Python bytecode (pytest cache for ambient-e2e verify scripts)
+__pycache__/
+*.pyc
+
+# MemPalace artifacts (local indexing state)
+mempalace.yaml
+entities.json

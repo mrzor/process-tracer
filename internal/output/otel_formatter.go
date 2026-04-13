@@ -260,36 +260,29 @@ func environToSlice(env map[string]string) []string {
 
 // traceIDResolutionAttrs converts a TraceIDResolution into debug.trace_id.* attributes.
 func traceIDResolutionAttrs(res attributes.TraceIDResolution) []attribute.KeyValue {
-	attrs := []attribute.KeyValue{attribute.String("debug.trace_id.source", res.Source)}
-	if res.Expression != "" {
-		attrs = append(attrs, attribute.String("debug.trace_id.expression", res.Expression))
-	}
-	if res.Source != attributes.SourceUnconfigured {
-		attrs = append(attrs, attribute.String("debug.trace_id.resolved_value", res.ResolvedValue))
-	}
-	if res.Validation != attributes.ValidationNone {
-		attrs = append(attrs, attribute.String("debug.trace_id.validation", res.Validation))
-	}
-	if res.Error != "" {
-		attrs = append(attrs, attribute.String("debug.trace_id.error", res.Error))
-	}
-	return attrs
+	return resolutionAttrs("debug.trace_id.", res.Source, res.Expression, res.ResolvedValue, res.Validation, res.Error)
 }
 
 // parentIDResolutionAttrs converts a ParentIDResolution into debug.parent_id.* attributes.
 func parentIDResolutionAttrs(res attributes.ParentIDResolution) []attribute.KeyValue {
-	attrs := []attribute.KeyValue{attribute.String("debug.parent_id.source", res.Source)}
-	if res.Expression != "" {
-		attrs = append(attrs, attribute.String("debug.parent_id.expression", res.Expression))
+	return resolutionAttrs("debug.parent_id.", res.Source, res.Expression, res.ResolvedValue, res.Validation, res.Error)
+}
+
+// resolutionAttrs builds the shared debug.* attribute set used for both
+// trace ID and parent ID resolution records.
+func resolutionAttrs(prefix, source, expression, resolvedValue, validation, errMsg string) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{attribute.String(prefix+"source", source)}
+	if expression != "" {
+		attrs = append(attrs, attribute.String(prefix+"expression", expression))
 	}
-	if res.Source != attributes.SourceUnconfigured {
-		attrs = append(attrs, attribute.String("debug.parent_id.resolved_value", res.ResolvedValue))
+	if source != attributes.SourceUnconfigured {
+		attrs = append(attrs, attribute.String(prefix+"resolved_value", resolvedValue))
 	}
-	if res.Validation != attributes.ValidationNone {
-		attrs = append(attrs, attribute.String("debug.parent_id.validation", res.Validation))
+	if validation != attributes.ValidationNone {
+		attrs = append(attrs, attribute.String(prefix+"validation", validation))
 	}
-	if res.Error != "" {
-		attrs = append(attrs, attribute.String("debug.parent_id.error", res.Error))
+	if errMsg != "" {
+		attrs = append(attrs, attribute.String(prefix+"error", errMsg))
 	}
 	return attrs
 }

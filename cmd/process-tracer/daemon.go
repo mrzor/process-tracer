@@ -51,7 +51,7 @@ func runDaemon(configPath string) error {
 	}
 
 	log.Printf("process-tracer daemon %s (commit %s, built %s)", version, commit, date)
-	log.Printf("loaded %d rules", len(cfg.Rules)) //nolint:gosec // integer from config, not tainted
+	log.Printf("loaded %d rules", len(cfg.Rules))
 
 	versionInfo := fmt.Sprintf("%s (%s)", version, commit)
 	tracer, otelCleanup, err := setupDaemonOTEL(cfg, versionInfo)
@@ -103,7 +103,7 @@ func runDaemon(configPath string) error {
 		log.Printf("error stopping event stream: %v", err)
 	}
 
-	log.Printf("shutdown complete (%d sessions were active)", manager.ActiveSessions()) //nolint:gosec // integer, not tainted
+	log.Printf("shutdown complete (%d sessions were active)", manager.ActiveSessions())
 	return nil
 }
 

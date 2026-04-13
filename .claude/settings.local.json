@@ -63,7 +63,8 @@
       "Bash(./run-test.sh:*)",
       "Skill(mempalace:status)",
       "Skill(mempalace:mempalace)",
-      "Bash(mempalace status:*)"
+      "Bash(mempalace status:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []

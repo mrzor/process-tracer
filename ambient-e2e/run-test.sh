@@ -163,7 +163,7 @@ ok "host/build" "Done"
 
 # --- Stage files ---
 
-cp "$SCRIPT_DIR/Makefile.test" "$STAGING/"
+cp "$SCRIPT_DIR/Makefile.pipeline" "$STAGING/"
 if [[ "$MODE" == "trace" ]]; then
     cp "$SCRIPT_DIR/guest-run-trace.sh" "$STAGING/guest-run.sh"
 else

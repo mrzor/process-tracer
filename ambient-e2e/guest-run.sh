@@ -6,7 +6,7 @@ HOST="http://10.0.2.2:9999"
 echo "[guest] Downloading files from host..."
 curl -sf "$HOST/process-tracer" -o /tmp/process-tracer
 curl -sf "$HOST/ambient-test.yaml" -o /tmp/ambient-test.yaml
-curl -sf "$HOST/Makefile.test" -o /tmp/Makefile.test
+curl -sf "$HOST/Makefile.pipeline" -o /tmp/Makefile.pipeline
 chmod +x /tmp/process-tracer
 
 echo "[guest] Starting process-tracer daemon..."
@@ -22,11 +22,17 @@ find /tmp -maxdepth 1 -type f > /dev/null 2>&1 || true
 dd if=/dev/zero of=/dev/null bs=1k count=10 2>/dev/null
 ls /usr > /dev/null
 
-# --- Workload 2: matched by "e2e-make" rule ---
-echo "[guest] Running make (matched)..."
+# --- Workload 2: 3-step "pipeline" matched by "e2e-make" rule.
+# All three invocations share BUILD_ID, so their trace_ids match (sha256
+# fallback), making the three process.tree spans siblings under one trace.
+# Sequential happens-before across steps is guaranteed by the shell:
+# step N+1 only starts after step N exits.
+echo "[guest] Running pipeline (3 make invocations sharing BUILD_ID)..."
 export BUILD_ID="make-run-42"
 export BUILD_REGION="us-east-1"
-make -f /tmp/Makefile.test
+make -f /tmp/Makefile.pipeline build
+make -f /tmp/Makefile.pipeline test-parallel -j3
+make -f /tmp/Makefile.pipeline deploy
 
 # --- Workload 3: more unmatched noise ---
 echo "[guest] Running more unmatched processes..."

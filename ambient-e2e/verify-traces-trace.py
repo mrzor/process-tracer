@@ -5,6 +5,11 @@
 # ///
 """Verify OTLP trace output from the trace mode E2E test.
 
+Trace mode is a single invocation, so unlike daemon mode there's no
+multi-step pipeline. The trace-mode workload uses `make test-parallel -j3`
+to exercise concurrent siblings and the no-orphan invariant within one
+process.tree.
+
 Run with: uv run --script verify-traces-trace.py [traces.jsonl]
 Accepts pytest flags: uv run --script verify-traces-trace.py -- -v
 """
@@ -27,6 +32,8 @@ class Span:
     trace_id: str
     span_id: str
     parent_span_id: str
+    start_unix_nano: int = 0
+    end_unix_nano: int = 0
     attrs: dict[str, str | int | list] = field(default_factory=dict)
 
 
@@ -59,6 +66,8 @@ def parse_traces(path: Path) -> tuple[list[Span], list[dict]]:
                         trace_id=s.get("traceId", ""),
                         span_id=s.get("spanId", ""),
                         parent_span_id=s.get("parentSpanId", ""),
+                        start_unix_nano=int(s.get("startTimeUnixNano", 0)),
+                        end_unix_nano=int(s.get("endTimeUnixNano", 0)),
                         attrs=attrs,
                     ))
     return spans, resource_spans
@@ -136,7 +145,8 @@ def test_single_trace_id(all_spans):
 
 
 def test_span_count(all_spans):
-    assert len(all_spans) >= 4, f"got {len(all_spans)}"
+    # 1 tree + make + 3 parallel sleeps + 3 echoes (each via /bin/sh) → at least ~7
+    assert len(all_spans) >= 5, f"got {len(all_spans)}"
 
 
 def test_process_tree_is_session_root(all_spans):
@@ -166,17 +176,16 @@ def test_first_exec_child_of_process_tree(all_spans):
         f"first exec parent={first.parent_span_id!r}, tree={tree.span_id!r}"
 
 
-def test_expected_children(all_spans):
-    cmds = {s.attrs.get("process.command") for s in all_spans}
-    for expected in ("sleep", "hostname", "uname"):
-        assert expected in cmds, f"missing child command: {expected}"
-
-
 def test_make_has_children(all_spans):
     first = _first_exec(all_spans)
     assert first is not None
     children = [s for s in all_spans if s.parent_span_id == first.span_id]
     assert len(children) >= 2, f"expected >= 2 direct children of make, got {len(children)}"
+
+
+def test_three_parallel_sleeps(all_spans):
+    sleeps = [s for s in all_spans if s.attrs.get("process.command") == "sleep"]
+    assert len(sleeps) >= 3, f"expected >=3 sleep spans (test-parallel -j3), got {len(sleeps)}"
 
 
 def test_custom_attributes(all_spans):
@@ -198,17 +207,6 @@ def test_required_attributes(all_spans):
             f"{attr} missing on {len(missing)}/{len(exec_spans)} exec spans"
 
 
-def test_sleep_duration(all_spans):
-    durations = [
-        int(s.attrs.get("process.duration_ns", 0))
-        for s in all_spans
-        if s.attrs.get("process.command") == "sleep"
-    ]
-    assert durations, "no sleep spans found"
-    assert max(durations) >= 150_000_000, \
-        f"longest sleep was {max(durations) // 1_000_000}ms, expected >= 150ms"
-
-
 def test_resource_service_name(resource_spans):
     names = set()
     for rs in resource_spans:
@@ -216,6 +214,57 @@ def test_resource_service_name(resource_spans):
             if a["key"] == "service.name":
                 names.add(a["value"].get("stringValue", ""))
     assert names == {"sched_trace"}, f"got {names}"
+
+
+# -- Parallelism (the three sleep recipes under `make test-parallel -j3`) --
+
+
+def test_sleep_siblings_overlap(all_spans):
+    """The three sleeps must run concurrently — their lifetimes overlap
+    (max(starts) < min(ends))."""
+    sleeps = [s for s in all_spans if s.attrs.get("process.command") == "sleep"]
+    assert len(sleeps) >= 3, f"need >=3 sleeps, got {len(sleeps)}"
+    sleeps = sorted(sleeps, key=lambda s: s.start_unix_nano)[:3]
+    starts = [s.start_unix_nano for s in sleeps]
+    ends = [s.end_unix_nano for s in sleeps]
+    assert max(starts) < min(ends), (
+        f"sleep spans don't overlap (not parallel): "
+        f"max(starts)={max(starts)}, min(ends)={min(ends)}"
+    )
+
+
+def test_sleep_duration(all_spans):
+    durations = [
+        int(s.attrs.get("process.duration_ns", 0))
+        for s in all_spans
+        if s.attrs.get("process.command") == "sleep"
+    ]
+    assert durations, "no sleep spans found"
+    # Each sleep is 0.2s; allow some scheduling slack.
+    assert min(durations) >= 150_000_000, \
+        f"shortest sleep was {min(durations) // 1_000_000}ms, expected >= 150ms"
+
+
+# -- No-orphan invariant (regression guard for the orphan-fallback fix) --
+
+
+def test_no_orphan_spans(all_spans):
+    """Every non-process.tree span's parent_span_id must resolve to some span
+    in the same trace. Before the orphan-fallback fix, descendants whose ppid
+    wasn't tracked silently started new one-span traces."""
+    by_id = {s.span_id: s for s in all_spans}
+    for s in all_spans:
+        if s.name == "process.tree":
+            continue  # tree's parent is the synthetic virtual SpanID
+        parent = by_id.get(s.parent_span_id)
+        assert parent is not None, (
+            f"orphan: span {s.span_id} ({s.attrs.get('process.command')}) "
+            f"parent_span_id {s.parent_span_id!r} not present in export"
+        )
+        assert parent.trace_id == s.trace_id, (
+            f"cross-trace parent: span {s.span_id} in trace {s.trace_id}, "
+            f"parent in trace {parent.trace_id}"
+        )
 
 
 # -- Debug attributes (--add-debug-attributes enabled in guest-run-trace.sh) --

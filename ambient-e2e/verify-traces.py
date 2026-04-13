@@ -5,6 +5,11 @@
 # ///
 """Verify OTLP trace output from the daemon mode E2E test.
 
+The daemon-mode workload is now pipeline-shaped: three sequential `make`
+invocations sharing one BUILD_ID. Each invocation produces one
+`process.tree` span; all three share the same trace_id (sha256 fallback
+on the non-hex BUILD_ID), so they appear as siblings under one trace.
+
 Run with: uv run --script verify-traces.py [traces.jsonl]
 Accepts pytest flags: uv run --script verify-traces.py -- -v
 """
@@ -18,7 +23,7 @@ from pathlib import Path
 import pytest
 
 
-# ── Data model ──────────────────────────────────────────────
+# -- Data model --
 
 
 @dataclass
@@ -27,6 +32,8 @@ class Span:
     trace_id: str
     span_id: str
     parent_span_id: str
+    start_unix_nano: int = 0
+    end_unix_nano: int = 0
     attrs: dict[str, str | int | list] = field(default_factory=dict)
 
 
@@ -59,12 +66,14 @@ def parse_traces(path: Path) -> tuple[list[Span], list[dict]]:
                         trace_id=s.get("traceId", ""),
                         span_id=s.get("spanId", ""),
                         parent_span_id=s.get("parentSpanId", ""),
+                        start_unix_nano=int(s.get("startTimeUnixNano", 0)),
+                        end_unix_nano=int(s.get("endTimeUnixNano", 0)),
                         attrs=attrs,
                     ))
     return spans, resource_spans
 
 
-# ── Fixtures ────────────────────────────────────────────────
+# -- Fixtures --
 
 
 TRACES_PATH: Path | None = None
@@ -100,32 +109,70 @@ def resource_spans(parsed):
     return parsed[1]
 
 
+# -- Helpers --
+
+
 def _spans_by_svc(spans: list[Span], svc: str) -> list[Span]:
     return [s for s in spans if s.attrs.get("service.name") == svc]
-
-
-def _process_tree(spans: list[Span]) -> Span | None:
-    """The synthetic root span emitted once per session."""
-    trees = [s for s in spans if s.name == "process.tree"]
-    return trees[0] if trees else None
 
 
 def _exec_spans(spans: list[Span]) -> list[Span]:
     return [s for s in spans if s.name == "process.exec"]
 
 
-def _first_exec(spans: list[Span]) -> Span | None:
-    """The first observed process.exec — child of the session's process.tree span."""
-    tree = _process_tree(spans)
-    if tree is None:
-        return None
-    children = [s for s in _exec_spans(spans) if s.parent_span_id == tree.span_id]
+def _trees_in_order(spans: list[Span]) -> list[Span]:
+    """All process.tree spans, sorted by start time."""
+    trees = [s for s in spans if s.name == "process.tree"]
+    return sorted(trees, key=lambda s: s.start_unix_nano)
+
+
+def _descendants_of(spans: list[Span], root: Span) -> list[Span]:
+    """All spans transitively reachable from `root` via parent_span_id chains.
+    Includes `root` itself."""
+    by_parent: dict[str, list[Span]] = {}
+    for s in spans:
+        by_parent.setdefault(s.parent_span_id, []).append(s)
+    out: list[Span] = [root]
+    stack = [root.span_id]
+    while stack:
+        pid = stack.pop()
+        for child in by_parent.get(pid, []):
+            out.append(child)
+            stack.append(child.span_id)
+    return out
+
+
+def _first_direct_exec(members: list[Span], tree: Span) -> Span | None:
+    """First process.exec that's a direct child of `tree`."""
+    children = [
+        s for s in _exec_spans(members)
+        if s.parent_span_id == tree.span_id
+    ]
     return children[0] if children else None
 
 
 @pytest.fixture(scope="session")
-def make_spans(all_spans):
-    return _spans_by_svc(all_spans, "ambient-e2e-make")
+def make_trees(all_spans):
+    """Pipeline trees in chronological order (make rule)."""
+    return [
+        t for t in _trees_in_order(all_spans)
+        if t.attrs.get("service.name") == "ambient-e2e-make"
+    ]
+
+
+@pytest.fixture(scope="session")
+def make_sessions(all_spans, make_trees):
+    """[(tree, members)] for each make invocation, in pipeline order."""
+    return [(t, _descendants_of(all_spans, t)) for t in make_trees]
+
+
+@pytest.fixture(scope="session")
+def make_spans(make_sessions):
+    """Flat list of all spans across all make sessions."""
+    out: list[Span] = []
+    for _, members in make_sessions:
+        out.extend(members)
+    return out
 
 
 @pytest.fixture(scope="session")
@@ -133,7 +180,7 @@ def perl_spans(all_spans):
     return _spans_by_svc(all_spans, "ambient-e2e-perl")
 
 
-# ── Tests ───────────────────────────────────────────────────
+# -- Module-level invariants --
 
 
 def test_span_names(all_spans):
@@ -141,206 +188,6 @@ def test_span_names(all_spans):
     allowed = {"process.tree", "process.exec"}
     bad = [s.name for s in all_spans if s.name not in allowed]
     assert not bad, f"unexpected span names: {bad}"
-
-
-# -- Make session --
-
-
-class TestMakeSession:
-    def test_span_count(self, make_spans):
-        assert len(make_spans) >= 4, f"got {len(make_spans)}"
-
-    def test_process_tree_is_session_root(self, make_spans):
-        """process.tree sits at the top of the session. When custom trace_id is
-        configured (this rule uses BUILD_ID), StartSession synthesizes a virtual
-        parent SpanID so OTEL honors the injected trace_id — that virtual parent
-        does NOT exist as a real span in the export. No other session span may
-        be process.tree's parent."""
-        tree = _process_tree(make_spans)
-        assert tree is not None, "no process.tree span"
-        session_span_ids = {s.span_id for s in make_spans}
-        assert tree.parent_span_id not in session_span_ids, \
-            f"process.tree parented by another session span: {tree.parent_span_id!r}"
-
-    def test_first_exec_is_make(self, make_spans):
-        first = _first_exec(make_spans)
-        assert first is not None, "no first exec under process.tree"
-        assert first.attrs.get("process.command") == "make"
-
-    def test_first_exec_child_of_process_tree(self, make_spans):
-        tree = _process_tree(make_spans)
-        first = _first_exec(make_spans)
-        assert tree is not None and first is not None
-        assert first.parent_span_id == tree.span_id, \
-            f"first exec parent={first.parent_span_id!r}, tree={tree.span_id!r}"
-
-    def test_single_trace_id(self, make_spans):
-        ids = set(s.trace_id for s in make_spans)
-        assert len(ids) == 1, f"found {len(ids)} traceIds: {ids}"
-
-    def test_expected_children(self, make_spans):
-        cmds = {s.attrs.get("process.command") for s in make_spans}
-        for expected in ("sleep", "hostname", "uname"):
-            assert expected in cmds, f"missing child command: {expected}"
-
-    def test_make_has_children(self, make_spans):
-        first = _first_exec(make_spans)
-        assert first is not None
-        children = [s for s in make_spans if s.parent_span_id == first.span_id]
-        assert len(children) >= 2, f"expected >= 2 direct children of make, got {len(children)}"
-
-    def test_env_attributes(self, make_spans):
-        for s in make_spans:
-            assert s.attrs.get("build.id") == "make-run-42", \
-                f"span {s.span_id} build.id={s.attrs.get('build.id')}"
-            assert s.attrs.get("build.region") == "us-east-1", \
-                f"span {s.span_id} build.region={s.attrs.get('build.region')}"
-
-    def test_sleep_duration(self, make_spans):
-        durations = [
-            int(s.attrs.get("process.duration_ns", 0))
-            for s in make_spans
-            if s.attrs.get("process.command") == "sleep"
-        ]
-        assert durations, "no sleep spans found"
-        assert max(durations) >= 150_000_000, \
-            f"longest sleep was {max(durations) // 1_000_000}ms, expected >= 150ms"
-
-    # --- Debug attributes (add_debug_attributes: true on this rule) ---
-
-    def test_debug_argv_on_every_exec_span(self, make_spans):
-        """debug.argv should be present on every process.exec span when add_debug_attributes is enabled."""
-        for s in _exec_spans(make_spans):
-            argv = s.attrs.get("debug.argv")
-            assert isinstance(argv, list) and len(argv) > 0, \
-                f"span {s.span_id} ({s.attrs.get('process.command')}) missing debug.argv, got: {argv!r}"
-
-    def test_debug_environ_contains_build_id(self, make_spans):
-        """debug.environ should include BUILD_ID=make-run-42 on every process.exec span."""
-        for s in _exec_spans(make_spans):
-            environ = s.attrs.get("debug.environ")
-            assert isinstance(environ, list) and len(environ) > 0, \
-                f"span {s.span_id} missing debug.environ"
-            assert "BUILD_ID=make-run-42" in environ, \
-                f"span {s.span_id} debug.environ missing BUILD_ID entry"
-
-    def test_root_debug_trace_id_provenance(self, make_spans):
-        """process.tree span should show trace_id came from expr + hashed fallback (BUILD_ID is not hex)."""
-        root = _process_tree(make_spans)
-        assert root is not None
-        assert root.attrs.get("debug.trace_id.source") == "expr", \
-            f"got {root.attrs.get('debug.trace_id.source')!r}"
-        assert root.attrs.get("debug.trace_id.expression") == 'env["BUILD_ID"]', \
-            f"got {root.attrs.get('debug.trace_id.expression')!r}"
-        assert root.attrs.get("debug.trace_id.resolved_value") == "make-run-42", \
-            f"got {root.attrs.get('debug.trace_id.resolved_value')!r}"
-        # "make-run-42" is not valid 32-char hex → hashed fallback
-        assert root.attrs.get("debug.trace_id.validation") == "hashed", \
-            f"got {root.attrs.get('debug.trace_id.validation')!r}"
-
-    def test_root_debug_parent_id_unconfigured(self, make_spans):
-        """No parent_id expression → source=unconfigured."""
-        root = _process_tree(make_spans)
-        assert root is not None
-        assert root.attrs.get("debug.parent_id.source") == "unconfigured", \
-            f"got {root.attrs.get('debug.parent_id.source')!r}"
-
-    def test_non_root_spans_lack_root_debug_attrs(self, make_spans):
-        """debug.trace_id.*/debug.parent_id.* should only be on the process.tree root span."""
-        root = _process_tree(make_spans)
-        assert root is not None
-        for s in make_spans:
-            if s.span_id == root.span_id:
-                continue
-            assert "debug.trace_id.source" not in s.attrs, \
-                f"non-root span {s.span_id} has debug.trace_id.source"
-            assert "debug.parent_id.source" not in s.attrs, \
-                f"non-root span {s.span_id} has debug.parent_id.source"
-
-    def test_wire_trace_id_matches_expected_hash(self, make_spans):
-        """Wire trace_id should equal sha256("make-run-42")[:16] (hashed fallback result).
-
-        If this fails, the custom trace_id is being dropped before span creation —
-        likely because SpanContext.IsValid() rejects a context with a zero parent
-        SpanID. The debug provenance attrs still record the intent, but the actual
-        trace on the wire is a random SDK-generated one.
-        """
-        expected = hashlib.sha256(b"make-run-42").hexdigest()[:32]
-        ids = {s.trace_id for s in make_spans}
-        assert ids == {expected}, \
-            f"expected trace_id {expected}, got {ids}"
-
-
-# -- Perl session --
-
-
-class TestPerlSession:
-    def test_span_count(self, perl_spans):
-        assert len(perl_spans) >= 2, f"got {len(perl_spans)}"
-
-    def test_process_tree_is_session_root(self, perl_spans):
-        """perl rule has no custom trace_id → process.tree is a real trace root (no parent)."""
-        tree = _process_tree(perl_spans)
-        assert tree is not None, "no process.tree span"
-        assert tree.parent_span_id == "", \
-            f"process.tree should be root, got parent={tree.parent_span_id!r}"
-
-    def test_first_exec_is_perl(self, perl_spans):
-        first = _first_exec(perl_spans)
-        assert first is not None, "no first exec under process.tree"
-        assert first.attrs.get("process.command") == "perl"
-
-    def test_first_exec_child_of_process_tree(self, perl_spans):
-        tree = _process_tree(perl_spans)
-        first = _first_exec(perl_spans)
-        assert tree is not None and first is not None
-        assert first.parent_span_id == tree.span_id, \
-            f"first exec parent={first.parent_span_id!r}, tree={tree.span_id!r}"
-
-    def test_single_trace_id(self, perl_spans):
-        ids = set(s.trace_id for s in perl_spans)
-        assert len(ids) == 1, f"found {len(ids)} traceIds: {ids}"
-
-    def test_env_attributes(self, perl_spans):
-        for s in perl_spans:
-            assert s.attrs.get("job.id") == "perl-job-99", \
-                f"span {s.span_id} job.id={s.attrs.get('job.id')}"
-            assert s.attrs.get("job.tier") == "critical", \
-                f"span {s.span_id} job.tier={s.attrs.get('job.tier')}"
-
-    def test_perl_has_children(self, perl_spans):
-        first = _first_exec(perl_spans)
-        assert first is not None
-        children = [s for s in perl_spans if s.parent_span_id == first.span_id]
-        assert len(children) >= 1, "no child spans"
-
-    def test_no_debug_attrs_on_unenabled_rule(self, perl_spans):
-        """e2e-perl rule does NOT set add_debug_attributes — debug.* must be absent."""
-        for s in perl_spans:
-            leaked = [k for k in s.attrs if k.startswith("debug.")]
-            assert not leaked, \
-                f"span {s.span_id} (perl rule) leaked debug attrs: {leaked}"
-
-
-# -- Cross-session --
-
-
-def test_sessions_have_distinct_trace_ids(make_spans, perl_spans):
-    make_ids = {s.trace_id for s in make_spans}
-    perl_ids = {s.trace_id for s in perl_spans}
-    assert make_ids and perl_ids, "one or both sessions empty"
-    assert make_ids.isdisjoint(perl_ids), \
-        f"sessions share traceIds: {make_ids & perl_ids}"
-
-
-def test_unmatched_processes_not_traced(all_spans):
-    """find, dd, ls, cat, wc ran in the VM but should not produce spans."""
-    unmatched = ("find", "dd", "ls", "cat", "wc")
-    leaked = [
-        cmd for cmd in unmatched
-        if any(s.attrs.get("process.command") == cmd for s in all_spans)
-    ]
-    assert not leaked, f"unmatched commands leaked into traces: {leaked}"
 
 
 def test_required_attributes(all_spans):
@@ -363,7 +210,289 @@ def test_resource_service_name(resource_spans):
     assert names == {"ambient-e2e-daemon"}, f"got {names}"
 
 
-# ── Entry point ─────────────────────────────────────────────
+def test_unmatched_processes_not_traced(all_spans):
+    """find, dd, ls, cat, wc ran in the VM but should not produce spans."""
+    unmatched = ("find", "dd", "ls", "cat", "wc")
+    leaked = [
+        cmd for cmd in unmatched
+        if any(s.attrs.get("process.command") == cmd for s in all_spans)
+    ]
+    assert not leaked, f"unmatched commands leaked into traces: {leaked}"
+
+
+# -- No-orphan invariant (regression guard for the orphan-fallback fix) --
+
+
+def test_no_orphan_spans(all_spans):
+    """Every non-process.tree span's parent_span_id must resolve to some span
+    in the same trace. Before the orphan-fallback fix, descendants whose ppid
+    wasn't tracked silently started new one-span traces — this test would have
+    flagged that regression."""
+    by_id = {s.span_id: s for s in all_spans}
+    for s in all_spans:
+        if s.name == "process.tree":
+            continue  # tree's parent is the synthetic virtual SpanID, not a real span
+        parent = by_id.get(s.parent_span_id)
+        assert parent is not None, (
+            f"orphan: span {s.span_id} ({s.attrs.get('process.command')}) "
+            f"parent_span_id {s.parent_span_id!r} not present in export"
+        )
+        assert parent.trace_id == s.trace_id, (
+            f"cross-trace parent: span {s.span_id} in trace {s.trace_id}, "
+            f"parent in trace {parent.trace_id}"
+        )
+
+
+def test_every_non_tree_span_has_a_tree_ancestor(all_spans):
+    """Walking parent_span_id from any non-tree span must reach a process.tree."""
+    by_id = {s.span_id: s for s in all_spans}
+    for s in all_spans:
+        if s.name == "process.tree":
+            continue
+        cur = s
+        reached_tree = False
+        for _ in range(len(all_spans) + 1):  # bounded to break cycles
+            parent = by_id.get(cur.parent_span_id)
+            assert parent is not None, \
+                f"span {s.span_id} chain broke at {cur.span_id} " \
+                f"(parent_span_id {cur.parent_span_id!r} not in export)"
+            if parent.name == "process.tree":
+                reached_tree = True
+                break
+            cur = parent
+        assert reached_tree, \
+            f"span {s.span_id} parent chain did not reach a process.tree (cycle?)"
+
+
+# -- Pipeline shape (three make invocations sharing trace_id) --
+
+
+class TestPipelineShape:
+    def test_three_pipeline_steps(self, make_trees):
+        assert len(make_trees) == 3, \
+            f"expected 3 process.tree spans (build/test-parallel/deploy), got {len(make_trees)}"
+
+    def test_shared_trace_id(self, make_trees):
+        """All three pipeline steps share the BUILD_ID-derived trace_id."""
+        ids = {t.trace_id for t in make_trees}
+        assert len(ids) == 1, f"pipeline split across traces: {ids}"
+        expected = hashlib.sha256(b"make-run-42").hexdigest()[:32]
+        assert ids == {expected}, f"trace_id mismatch: got {ids}, expected {{{expected}}}"
+
+    def test_distinct_tree_span_ids(self, make_trees):
+        """Regression: random SpanID per session means no collision even
+        when BUILD_ID (and hence trace_id) is shared. A naive sha256-derived
+        SpanID would collide across all three steps."""
+        ids = {t.span_id for t in make_trees}
+        assert len(ids) == 3, f"process.tree spans collided on span_id: {ids}"
+
+    def test_distinct_virtual_parents(self, make_trees):
+        """Each session synthesizes a fresh virtual parent SpanID via
+        crypto/rand — so parent_span_ids differ across pipeline steps."""
+        parents = {t.parent_span_id for t in make_trees}
+        assert len(parents) == 3, f"trees share virtual parent: {parents}"
+
+    def test_happens_before_across_steps(self, make_trees):
+        """end(step_N) <= start(step_N+1). Hard invariant — the next `make`
+        invocation only starts after the previous one exits (shell semantics)."""
+        for prev, curr in zip(make_trees, make_trees[1:]):
+            assert prev.end_unix_nano <= curr.start_unix_nano, (
+                f"step {prev.span_id} ended {prev.end_unix_nano} but "
+                f"step {curr.span_id} started {curr.start_unix_nano}"
+            )
+
+    def test_trees_are_session_roots(self, make_trees, all_spans):
+        """No exported span may be a process.tree's parent (the parent is the
+        synthetic virtual SpanID that doesn't exist in the export)."""
+        all_ids = {s.span_id for s in all_spans}
+        for tree in make_trees:
+            assert tree.parent_span_id not in all_ids, \
+                f"tree {tree.span_id} parented by another span: {tree.parent_span_id!r}"
+
+
+# -- Per-step shape --
+
+
+class TestPipelineSteps:
+    """Per-step assertions, indexed by pipeline order: 0=build, 1=test-parallel, 2=deploy."""
+
+    def test_each_first_exec_is_make(self, make_sessions):
+        for idx, (tree, members) in enumerate(make_sessions):
+            first = _first_direct_exec(members, tree)
+            assert first is not None, f"step {idx}: no direct exec under tree"
+            assert first.attrs.get("process.command") == "make", \
+                f"step {idx} first exec is {first.attrs.get('process.command')}, not make"
+
+    def test_build_step_commands(self, make_sessions):
+        _, members = make_sessions[0]
+        cmds = {s.attrs.get("process.command") for s in members}
+        for expected in ("make", "hostname", "sleep", "uname"):
+            assert expected in cmds, f"build step missing {expected!r}; got {cmds}"
+
+    def test_test_parallel_step_has_three_sleeps(self, make_sessions):
+        _, members = make_sessions[1]
+        sleeps = [s for s in members if s.attrs.get("process.command") == "sleep"]
+        assert len(sleeps) >= 3, \
+            f"test-parallel: expected >=3 sleep spans, got {len(sleeps)}"
+
+    def test_deploy_step_has_nested_subshell(self, make_sessions):
+        """The deploy recipe runs `bash -c '...; uname -m'`. On Debian, make
+        executes recipes via /bin/sh, and the comm captured at exec entry may
+        be `sh` (before the sh→bash exec re-exec). Accept either as evidence
+        of a sub-shell, and require `uname` as proof the inner commands ran."""
+        _, members = make_sessions[2]
+        cmds = {s.attrs.get("process.command") for s in members}
+        assert cmds & {"bash", "sh"}, f"deploy step missing sub-shell; got {cmds}"
+        assert "uname" in cmds, f"deploy step missing inner uname; got {cmds}"
+
+
+# -- Parallelism within the test-parallel step --
+
+
+class TestParallelism:
+    """The three sleep recipes under `make test-parallel -j3` should run
+    concurrently — their lifetimes must overlap (max(starts) < min(ends))."""
+
+    def test_sleep_siblings_overlap(self, make_sessions):
+        _, members = make_sessions[1]
+        sleeps = [s for s in members if s.attrs.get("process.command") == "sleep"]
+        assert len(sleeps) >= 3, f"need >=3 sleeps, got {len(sleeps)}"
+        # Sort by start to make the failure message readable.
+        sleeps = sorted(sleeps, key=lambda s: s.start_unix_nano)[:3]
+        starts = [s.start_unix_nano for s in sleeps]
+        ends = [s.end_unix_nano for s in sleeps]
+        assert max(starts) < min(ends), (
+            f"sleep spans don't overlap (not parallel): "
+            f"max(starts)={max(starts)}, min(ends)={min(ends)}"
+        )
+
+    def test_sleep_durations_meet_expected(self, make_sessions):
+        _, members = make_sessions[1]
+        durations = [
+            int(s.attrs.get("process.duration_ns", 0))
+            for s in members
+            if s.attrs.get("process.command") == "sleep"
+        ]
+        assert durations, "no sleep spans in test-parallel step"
+        # Each sleep is 0.2s. Allow some slack for scheduling jitter.
+        assert min(durations) >= 150_000_000, \
+            f"shortest sleep was {min(durations) // 1_000_000}ms, expected >= 150ms"
+
+
+# -- Cross-cutting attribute checks (apply to every make-session span) --
+
+
+class TestMakeAttributes:
+    def test_env_attributes(self, make_spans):
+        for s in make_spans:
+            assert s.attrs.get("build.id") == "make-run-42", \
+                f"span {s.span_id} build.id={s.attrs.get('build.id')}"
+            assert s.attrs.get("build.region") == "us-east-1", \
+                f"span {s.span_id} build.region={s.attrs.get('build.region')}"
+
+    def test_debug_argv_on_every_exec_span(self, make_spans):
+        for s in _exec_spans(make_spans):
+            argv = s.attrs.get("debug.argv")
+            assert isinstance(argv, list) and len(argv) > 0, \
+                f"span {s.span_id} ({s.attrs.get('process.command')}) missing debug.argv, got: {argv!r}"
+
+    def test_debug_environ_contains_build_id(self, make_spans):
+        for s in _exec_spans(make_spans):
+            environ = s.attrs.get("debug.environ")
+            assert isinstance(environ, list) and len(environ) > 0, \
+                f"span {s.span_id} missing debug.environ"
+            assert "BUILD_ID=make-run-42" in environ, \
+                f"span {s.span_id} debug.environ missing BUILD_ID entry"
+
+
+class TestMakeRootDebugProvenance:
+    """Each pipeline step's process.tree gets the trace_id/parent_id provenance
+    debug attrs. These should *not* leak onto descendant spans."""
+
+    def test_each_tree_has_expected_provenance(self, make_trees):
+        for tree in make_trees:
+            assert tree.attrs.get("debug.trace_id.source") == "expr", \
+                f"tree {tree.span_id} debug.trace_id.source={tree.attrs.get('debug.trace_id.source')!r}"
+            assert tree.attrs.get("debug.trace_id.expression") == 'env["BUILD_ID"]', \
+                f"tree {tree.span_id} debug.trace_id.expression={tree.attrs.get('debug.trace_id.expression')!r}"
+            assert tree.attrs.get("debug.trace_id.resolved_value") == "make-run-42", \
+                f"tree {tree.span_id} debug.trace_id.resolved_value={tree.attrs.get('debug.trace_id.resolved_value')!r}"
+            # "make-run-42" is not valid 32-char hex → hashed fallback.
+            assert tree.attrs.get("debug.trace_id.validation") == "hashed", \
+                f"tree {tree.span_id} debug.trace_id.validation={tree.attrs.get('debug.trace_id.validation')!r}"
+            assert tree.attrs.get("debug.parent_id.source") == "unconfigured", \
+                f"tree {tree.span_id} debug.parent_id.source={tree.attrs.get('debug.parent_id.source')!r}"
+
+    def test_non_root_spans_lack_root_debug_attrs(self, make_spans, make_trees):
+        tree_ids = {t.span_id for t in make_trees}
+        for s in make_spans:
+            if s.span_id in tree_ids:
+                continue
+            assert "debug.trace_id.source" not in s.attrs, \
+                f"non-root span {s.span_id} has debug.trace_id.source"
+            assert "debug.parent_id.source" not in s.attrs, \
+                f"non-root span {s.span_id} has debug.parent_id.source"
+
+
+# -- Perl session (single invocation, different rule, different trace_id) --
+
+
+class TestPerlSession:
+    def test_span_count(self, perl_spans):
+        assert len(perl_spans) >= 2, f"got {len(perl_spans)}"
+
+    def test_process_tree_is_session_root(self, perl_spans):
+        """perl rule has no custom trace_id → process.tree is a real trace root (no parent)."""
+        trees = [s for s in perl_spans if s.name == "process.tree"]
+        assert len(trees) == 1, f"expected 1 perl tree, got {len(trees)}"
+        assert trees[0].parent_span_id == "", \
+            f"process.tree should be root, got parent={trees[0].parent_span_id!r}"
+
+    def test_first_exec_is_perl(self, perl_spans):
+        trees = [s for s in perl_spans if s.name == "process.tree"]
+        tree = trees[0]
+        first = _first_direct_exec(perl_spans, tree)
+        assert first is not None, "no first exec under perl tree"
+        assert first.attrs.get("process.command") == "perl"
+
+    def test_single_trace_id(self, perl_spans):
+        ids = set(s.trace_id for s in perl_spans)
+        assert len(ids) == 1, f"found {len(ids)} traceIds: {ids}"
+
+    def test_env_attributes(self, perl_spans):
+        for s in perl_spans:
+            assert s.attrs.get("job.id") == "perl-job-99", \
+                f"span {s.span_id} job.id={s.attrs.get('job.id')}"
+            assert s.attrs.get("job.tier") == "critical", \
+                f"span {s.span_id} job.tier={s.attrs.get('job.tier')}"
+
+    def test_perl_has_children(self, perl_spans):
+        trees = [s for s in perl_spans if s.name == "process.tree"]
+        first = _first_direct_exec(perl_spans, trees[0])
+        assert first is not None
+        children = [s for s in perl_spans if s.parent_span_id == first.span_id]
+        assert len(children) >= 1, "no child spans"
+
+    def test_no_debug_attrs_on_unenabled_rule(self, perl_spans):
+        """e2e-perl rule does NOT set add_debug_attributes — debug.* must be absent."""
+        for s in perl_spans:
+            leaked = [k for k in s.attrs if k.startswith("debug.")]
+            assert not leaked, \
+                f"span {s.span_id} (perl rule) leaked debug attrs: {leaked}"
+
+
+# -- Cross-rule --
+
+
+def test_make_and_perl_have_different_trace_ids(make_trees, perl_spans):
+    make_ids = {t.trace_id for t in make_trees}
+    perl_ids = {s.trace_id for s in perl_spans}
+    assert make_ids and perl_ids, "one or both rule outputs empty"
+    assert make_ids.isdisjoint(perl_ids), \
+        f"rules share traceIds: {make_ids & perl_ids}"
+
+
+# -- Entry point --
 
 
 if __name__ == "__main__":

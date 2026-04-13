@@ -1,0 +1,36 @@
+# Three pipeline-shaped targets, each invoked separately from guest-run.sh
+# under the same BUILD_ID. Each invocation produces one process.tree span;
+# they share trace_id (sha256(BUILD_ID)) and so render as siblings under one
+# pipeline trace. Sequential happens-before is guaranteed by shell semantics
+# (the next `make` only starts after the previous one exits).
+
+.PHONY: build test-parallel deploy task-a task-b task-c
+
+# Sequential: a chain of short commands.
+build:
+	echo "build: phase1"
+	hostname
+	sleep 0.05
+	uname -r
+
+# Parallel: three sibling targets fanned out via `make -j3`.
+# Each sleeps long enough that all three lifetimes reliably overlap.
+test-parallel: task-a task-b task-c
+
+task-a:
+	sleep 0.2
+	echo "task-a done"
+
+task-b:
+	sleep 0.2
+	echo "task-b done"
+
+task-c:
+	sleep 0.2
+	echo "task-c done"
+
+# Sequential with one nested sub-shell, exercising deeper trees.
+deploy:
+	echo "deploy: prepare"
+	bash -c 'echo "deploy: nested"; sleep 0.05; uname -m'
+	echo "deploy: done"

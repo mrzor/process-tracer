@@ -55,7 +55,15 @@
       "Bash(.cache/otelcol-contrib --config otelcol.yaml)",
       "Bash(kill %1)",
       "Bash(wait)",
-      "Bash(pkill -f otelcol-contrib)"
+      "Bash(pkill -f otelcol-contrib)",
+      "Bash(actionlint .github/workflows/release.yml)",
+      "Bash(git check-ignore:*)",
+      "Bash(echo \"exit: $?\")",
+      "Bash(./run-test.sh --mode=daemon)",
+      "Bash(./run-test.sh:*)",
+      "Skill(mempalace:status)",
+      "Skill(mempalace:mempalace)",
+      "Bash(mempalace status:*)"
     ],
     "deny": [],
     "ask": []

@@ -17,9 +17,9 @@ rules:
     # plus debug.trace_id.*/debug.parent_id.* provenance on the process.tree
     # root. Useful when investigating why CI_PIPELINE_ID isn't producing the
     # expected trace_id (wrong env, hashed fallback path, missing var). May
-    # contain sensitive data (full env, full argv) -- leave off in production
-    # and toggle on temporarily to debug.
-    # add_debug_attributes: true
+    # contain sensitive data (full env, full argv) -- disable once the
+    # trace_id pipeline is verified.
+    add_debug_attributes: true
     attributes:
       # service.*
       service.name: 'expr:env["PROJECT_TYPE"] + "-" + env["PROJECT_NAME"] + "-ci"'

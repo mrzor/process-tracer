@@ -9,9 +9,13 @@ curl -sf "$HOST/Makefile.test" -o /tmp/Makefile.test
 chmod +x /tmp/process-tracer
 
 echo "[guest] Running traced make..."
+# BUILD_ID is read by the -t expression and is not valid 32-char hex, so
+# this exercises the SHA-256-hashed fallback in trace-id validation.
+export BUILD_ID="make-run-42"
 OTEL_EXPORTER_OTLP_ENDPOINT="http://10.0.2.2:4318" \
   /tmp/process-tracer trace \
     --add-debug-attributes \
+    -t 'expr:env["BUILD_ID"]' \
     -a service.name=trace-e2e-make \
     -a build.id=make-run-42 \
     -- make -f /tmp/Makefile.test

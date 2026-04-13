@@ -3,10 +3,13 @@ package output
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"fmt"
+	"log"
 	"net"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mrzor/process-tracer/internal/attributes"
 	"github.com/mrzor/process-tracer/internal/config"
@@ -33,6 +36,11 @@ type tcpSpanInfo struct {
 
 // OTELFormatter formats processed data as OpenTelemetry spans.
 // This is a pure formatting layer - it receives pre-processed data and creates spans.
+//
+// A single invocation of process-tracer produces one "process.tree" root span
+// (created by StartSession, ended by EndSession) under which all process.exec
+// spans hang. If a process.exec's ppid span isn't tracked, the span falls back
+// to the process.tree root — orphans are never allowed to start a new trace.
 type OTELFormatter struct {
 	tracer             trace.Tracer
 	converter          *timesync.Converter
@@ -44,12 +52,12 @@ type OTELFormatter struct {
 	addDebugAttributes bool
 
 	// Span tracking
-	spans              map[uint32]*processSpanInfo // PID -> span info
-	tcpSpans           map[uint64]*tcpSpanInfo     // socket addr -> TCP span info
-	traceID            trace.TraceID               // root trace ID
-	rootSpanPID        uint32                      // PID of the root span (0 if not set)
-	rootSpanWarnings   []attribute.KeyValue        // warnings to attach to root span
-	rootSpanDebugAttrs []attribute.KeyValue        // debug provenance to attach to root span
+	spans    map[uint32]*processSpanInfo // PID -> span info
+	tcpSpans map[uint64]*tcpSpanInfo     // socket addr -> TCP span info
+
+	// Session root: the "process.tree" span that covers this invocation.
+	sessionRootSpan trace.Span
+	sessionRootCtx  trace.SpanContext
 }
 
 // NewOTELFormatter creates a new OTEL formatter.
@@ -93,30 +101,130 @@ func NewOTELFormatter(
 		addDebugAttributes: addDebugAttributes,
 		spans:              make(map[uint32]*processSpanInfo),
 		tcpSpans:           make(map[uint64]*tcpSpanInfo),
-		rootSpanPID:        0,
-		rootSpanWarnings:   nil,
 	}, nil
 }
 
+// StartSession creates the synthetic "process.tree" root span for this invocation.
+// Must be called before any Handle* methods so that children can be parented under it.
+//
+// metadata describes the invocation context used to resolve trace_id/parent_id
+// expressions (typically the matched process in daemon mode, or a synthetic
+// representation of the traced command in trace mode). May be nil, in which
+// case trace_id/parent_id expressions are evaluated against empty state.
+func (f *OTELFormatter) StartSession(ctx context.Context, metadata *procmeta.ProcessMetadata, startTime time.Time) {
+	customTraceID, customParentID, warnings, debugAttrs := f.resolveRootIDs(metadata)
+
+	// Build a parent SpanContext that carries the desired trace_id (and real
+	// parent span id if configured). When trace_id is configured but parent_id
+	// isn't, we synthesize a random SpanID for the virtual parent so that
+	// trace.NewSpanContext(...).IsValid() returns true — the OTEL SDK needs a
+	// non-zero SpanID to honor a parent context.
+	if customTraceID.IsValid() {
+		spanID := customParentID
+		if !spanID.IsValid() {
+			if _, err := rand.Read(spanID[:]); err != nil {
+				log.Printf("warning: rand.Read for virtual parent span ID failed: %v", err)
+			}
+		}
+		if spanID.IsValid() {
+			parentCtx := trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID:    customTraceID,
+				SpanID:     spanID,
+				TraceFlags: trace.FlagsSampled,
+				Remote:     true,
+			})
+			if parentCtx.IsValid() {
+				ctx = trace.ContextWithSpanContext(ctx, parentCtx)
+			}
+		}
+	}
+
+	_, span := f.tracer.Start(ctx, "process.tree",
+		trace.WithSpanKind(trace.SpanKindInternal),
+		trace.WithTimestamp(startTime),
+	)
+
+	f.sessionRootSpan = span
+	f.sessionRootCtx = span.SpanContext()
+
+	// Attach root-only attributes: warnings, debug provenance, and custom attrs.
+	if len(warnings) > 0 {
+		span.SetAttributes(warnings...)
+	}
+	if len(debugAttrs) > 0 {
+		span.SetAttributes(debugAttrs...)
+	}
+	if metadata != nil {
+		if customAttrs, err := f.attrEvaluator.EvaluateCustomAttributes(metadata); err == nil && len(customAttrs) > 0 {
+			span.SetAttributes(customAttrs...)
+		}
+	}
+}
+
+// EndSession finalizes the "process.tree" root span. Safe to call more than once.
+func (f *OTELFormatter) EndSession(endTime time.Time) {
+	if f.sessionRootSpan == nil {
+		return
+	}
+	f.sessionRootSpan.End(trace.WithTimestamp(endTime))
+	f.sessionRootSpan = nil
+}
+
+// resolveRootIDs evaluates the trace-id and parent-id expressions against metadata.
+// Returns the resolved IDs plus any warnings / debug attrs to attach to the root span.
+func (f *OTELFormatter) resolveRootIDs(metadata *procmeta.ProcessMetadata) (
+	trace.TraceID, trace.SpanID, []attribute.KeyValue, []attribute.KeyValue,
+) {
+	var customTraceID trace.TraceID
+	var customParentID trace.SpanID
+	var warnings []attribute.KeyValue
+	var debugAttrs []attribute.KeyValue
+
+	if metadata == nil {
+		return customTraceID, customParentID, warnings, debugAttrs
+	}
+
+	traceID, traceWarnings, traceRes, err := f.traceIDEvaluator.EvaluateAndValidate(metadata)
+	if err != nil {
+		warnings = append(warnings,
+			attribute.String("_trace_id_evaluation_error", fmt.Sprintf("Failed to evaluate trace-id expression: %v", err)),
+		)
+	} else {
+		customTraceID = traceID
+		warnings = append(warnings, traceWarnings...)
+	}
+
+	parentID, parentWarnings, parentRes, err := f.parentIDEvaluator.EvaluateAndValidate(metadata)
+	if err != nil {
+		warnings = append(warnings,
+			attribute.String("_parent_id_evaluation_error", fmt.Sprintf("Failed to evaluate parent-id expression: %v", err)),
+		)
+	} else {
+		customParentID = parentID
+		warnings = append(warnings, parentWarnings...)
+	}
+
+	if f.addDebugAttributes {
+		debugAttrs = append(debugAttrs, traceIDResolutionAttrs(traceRes)...)
+		debugAttrs = append(debugAttrs, parentIDResolutionAttrs(parentRes)...)
+	}
+
+	return customTraceID, customParentID, warnings, debugAttrs
+}
+
 // HandleProcessExec creates a new process span.
-func (f *OTELFormatter) HandleProcessExec(pid, ppid, _ uint32, timestamp uint64, metadata *procmeta.ProcessMetadata) error {
-	// Determine if this is the root span (first process with no tracked parent)
-	isRootSpan := false
+func (f *OTELFormatter) HandleProcessExec(pid, ppid, _ uint32, timestamp uint64, _ *procmeta.ProcessMetadata) error {
+	// Parent selection: prefer tracked ppid's span, fall back to the session root.
+	// We never allow ctx to remain empty — that would start a new trace for orphans.
 	var parentSpanCtx trace.SpanContext
 	if parent, exists := f.spans[ppid]; exists {
 		parentSpanCtx = parent.SpanCtx
-	} else if f.rootSpanPID == 0 {
-		// No parent tracked and no root span set yet - this is the root
-		isRootSpan = true
-		f.rootSpanPID = pid
+	} else if f.sessionRootCtx.IsValid() {
+		parentSpanCtx = f.sessionRootCtx
 	}
 
-	// Create context - for root span, try to inject custom trace ID and parent ID
 	ctx := context.Background()
-
-	if isRootSpan {
-		ctx, _ = f.createRootSpanContext(ctx, pid, metadata) //nolint:errcheck // XXX: Consider logging custom trace ID injection failures
-	} else if parentSpanCtx.IsValid() {
+	if parentSpanCtx.IsValid() {
 		ctx = trace.ContextWithSpanContext(ctx, parentSpanCtx)
 	}
 
@@ -139,82 +247,6 @@ func (f *OTELFormatter) HandleProcessExec(pid, ppid, _ uint32, timestamp uint64,
 	return nil
 }
 
-// createRootSpanContext creates a span context for the root span with custom trace/parent IDs.
-func (f *OTELFormatter) createRootSpanContext(ctx context.Context, _ uint32, metadata *procmeta.ProcessMetadata) (context.Context, error) {
-	var customTraceID trace.TraceID
-	var customParentID trace.SpanID
-	var allWarnings []attribute.KeyValue
-	var debugAttrs []attribute.KeyValue
-
-	// Evaluate trace-id if expression is provided
-	if metadata != nil {
-		traceID, warnings, traceRes, err := f.traceIDEvaluator.EvaluateAndValidate(metadata)
-		if err != nil {
-			// Metadata not available yet or evaluation failed
-			allWarnings = append(allWarnings,
-				attribute.String("_trace_id_evaluation_error", fmt.Sprintf("Failed to evaluate trace-id expression: %v", err)),
-			)
-		} else {
-			customTraceID = traceID
-			allWarnings = append(allWarnings, warnings...)
-		}
-
-		// Evaluate parent-id if expression is provided
-		parentID, parentWarnings, parentRes, err := f.parentIDEvaluator.EvaluateAndValidate(metadata)
-		if err != nil {
-			// Metadata not available yet or evaluation failed - use zero span ID
-			allWarnings = append(allWarnings,
-				attribute.String("_parent_id_evaluation_error", fmt.Sprintf("Failed to evaluate parent-id expression: %v", err)),
-			)
-		} else {
-			customParentID = parentID
-			allWarnings = append(allWarnings, parentWarnings...)
-		}
-
-		if f.addDebugAttributes {
-			debugAttrs = append(debugAttrs, traceIDResolutionAttrs(traceRes)...)
-			debugAttrs = append(debugAttrs, parentIDResolutionAttrs(parentRes)...)
-		}
-	}
-
-	// Store warnings + debug attrs to add to the root span at exit time.
-	if len(allWarnings) > 0 {
-		f.rootSpanWarnings = allWarnings
-	}
-	if len(debugAttrs) > 0 {
-		f.rootSpanDebugAttrs = debugAttrs
-	}
-
-	// Create custom span context to inject trace ID and/or parent ID
-	if customTraceID.IsValid() || customParentID.IsValid() {
-		// Use custom trace ID if provided, otherwise generate one
-		traceIDToUse := customTraceID
-		if !traceIDToUse.IsValid() {
-			traceIDToUse = f.traceID
-		}
-
-		// Create parent span context with custom trace ID and parent span ID
-		spanCtxConfig := trace.SpanContextConfig{
-			TraceID:    traceIDToUse,
-			SpanID:     customParentID, // This becomes the parent span ID for the new span
-			TraceFlags: trace.FlagsSampled,
-			Remote:     true, // Mark as remote to indicate this is a parent from another service
-		}
-
-		customSpanCtx := trace.NewSpanContext(spanCtxConfig)
-		if customSpanCtx.IsValid() {
-			ctx = trace.ContextWithSpanContext(ctx, customSpanCtx)
-		}
-
-		// Store the trace ID for later spans to inherit
-		if customTraceID.IsValid() {
-			f.traceID = customTraceID
-		}
-	}
-
-	return ctx, nil
-}
-
 // environToSlice converts an env map to a sorted []string of "KEY=VALUE" entries.
 // Sorted so that repeated runs produce stable output, easing diffing.
 func environToSlice(env map[string]string) []string {
@@ -227,8 +259,6 @@ func environToSlice(env map[string]string) []string {
 }
 
 // traceIDResolutionAttrs converts a TraceIDResolution into debug.trace_id.* attributes.
-//
-//nolint:dupl // structurally similar to parentIDResolutionAttrs but the attribute keys differ
 func traceIDResolutionAttrs(res attributes.TraceIDResolution) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{attribute.String("debug.trace_id.source", res.Source)}
 	if res.Expression != "" {
@@ -247,8 +277,6 @@ func traceIDResolutionAttrs(res attributes.TraceIDResolution) []attribute.KeyVal
 }
 
 // parentIDResolutionAttrs converts a ParentIDResolution into debug.parent_id.* attributes.
-//
-//nolint:dupl // structurally similar to traceIDResolutionAttrs but the attribute keys differ
 func parentIDResolutionAttrs(res attributes.ParentIDResolution) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{attribute.String("debug.parent_id.source", res.Source)}
 	if res.Expression != "" {
@@ -333,16 +361,6 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 		}
 	}
 
-	// Add root-only attributes if this is the root span
-	if pid == f.rootSpanPID {
-		if len(f.rootSpanWarnings) > 0 {
-			spanInfo.Span.SetAttributes(f.rootSpanWarnings...)
-		}
-		if len(f.rootSpanDebugAttrs) > 0 {
-			spanInfo.Span.SetAttributes(f.rootSpanDebugAttrs...)
-		}
-	}
-
 	// End span with explicit end time
 	spanInfo.Span.End(trace.WithTimestamp(endTime))
 
@@ -355,10 +373,12 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 
 // HandleTCPConnect creates a new TCP connection span.
 func (f *OTELFormatter) HandleTCPConnect(pid uint32, skaddr uint64, _, _ []byte, _, _, _ uint16, timestamp uint64) error {
-	// Get parent span context from the process
+	// Parent selection: prefer the process's span, fall back to the session root.
 	var parentSpanCtx trace.SpanContext
 	if procSpanInfo, exists := f.spans[pid]; exists {
 		parentSpanCtx = procSpanInfo.SpanCtx
+	} else if f.sessionRootCtx.IsValid() {
+		parentSpanCtx = f.sessionRootCtx
 	}
 
 	// Create context with parent

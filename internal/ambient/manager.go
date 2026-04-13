@@ -1,6 +1,7 @@
 package ambient
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -104,6 +105,10 @@ func (m *SessionManager) CreateSession(pid uint32, rule *config.AmbientRule, met
 	m.pidToSession[pid] = session
 	m.totalPIDs++
 
+	// Start the synthetic "process.tree" root span for this session. All
+	// process.exec spans observed within this session will hang under it.
+	session.StartSession(context.Background(), metadata, time.Now())
+
 	// Track the PID in BPF so descendants are auto-tracked
 	if err := m.loader.TrackPID(int(pid)); err != nil {
 		log.Printf("warning: failed to track PID %d in BPF: %v", pid, err)
@@ -162,6 +167,8 @@ func (m *SessionManager) HandleExit(pid uint32) (*TraceSession, bool) {
 
 	empty := session.RemovePID(pid)
 	if empty {
+		// Close the synthetic "process.tree" root span; the session is done.
+		session.EndSession(time.Now())
 		delete(m.sessions, session.ID)
 		log.Printf("session %s: completed (root PID %d)", session.ID, session.RootPID)
 	}
@@ -187,6 +194,8 @@ func (m *SessionManager) CleanupStale() {
 					_ = m.loader.UntrackPID(int(pid)) //nolint:errcheck // best-effort cleanup
 				}
 			}
+			// Close the synthetic "process.tree" root span for the timed-out session.
+			session.EndSession(now)
 			delete(m.sessions, id)
 		}
 	}

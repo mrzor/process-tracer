@@ -1,6 +1,7 @@
 package ambient
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -65,6 +66,16 @@ func (s *TraceSession) HasPID(pid uint32) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.pids[pid]
+}
+
+// StartSession initializes the formatter's root "process.tree" span for this session.
+func (s *TraceSession) StartSession(ctx context.Context, metadata *procmeta.ProcessMetadata, startTime time.Time) {
+	s.formatter.StartSession(ctx, metadata, startTime)
+}
+
+// EndSession finalizes the formatter's root "process.tree" span for this session.
+func (s *TraceSession) EndSession(endTime time.Time) {
+	s.formatter.EndSession(endTime)
 }
 
 // HandleProcessExec delegates to the session's formatter.

@@ -133,13 +133,19 @@ func runTrace(cfg *config.Config) error {
 		wg.Wait()
 	}()
 
-	stream, err := setupComponents(cfg, tracer, rd)
+	stream, formatter, err := setupComponents(cfg, tracer, rd)
 	if err != nil {
 		return err
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Open the synthetic "process.tree" root span before any process events flow.
+	// All process.exec spans observed during this invocation will hang under it.
+	rootMetadata := buildTraceModeMetadata(cfg.Command, cfg.Args)
+	formatter.StartSession(ctx, rootMetadata, time.Now())
+	defer func() { formatter.EndSession(time.Now()) }()
 
 	if err := stream.Start(ctx); err != nil {
 		return err
@@ -230,10 +236,10 @@ func setupTraceBPF() (*bpfloader.Loader, *ringbuf.Reader, func(), error) {
 	return loader, rd, cleanup, nil
 }
 
-func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader) (*eventstream.Stream, error) {
+func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader) (*eventstream.Stream, *output.OTELFormatter, error) {
 	converter, err := timesync.NewConverter()
 	if err != nil {
-		return nil, fmt.Errorf("failed to create time converter: %w", err)
+		return nil, nil, fmt.Errorf("failed to create time converter: %w", err)
 	}
 
 	metadataManager := procmeta.NewManager()
@@ -251,7 +257,7 @@ func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader
 		cfg.AddDebugAttributes,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OTEL formatter: %w", err)
+		return nil, nil, fmt.Errorf("failed to create OTEL formatter: %w", err)
 	}
 
 	processor := eventprocessor.NewProcessor(
@@ -261,7 +267,26 @@ func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader
 		formatter,
 	)
 
-	return eventstream.New(rd, processor), nil
+	return eventstream.New(rd, processor), formatter, nil
+}
+
+// buildTraceModeMetadata synthesizes a ProcessMetadata representing the traced
+// command. Used by the formatter's trace_id/parent_id evaluators at session start.
+// The traced command inherits process-tracer's environment, so os.Environ() is
+// the right source for env lookups.
+func buildTraceModeMetadata(command string, args []string) *procmeta.ProcessMetadata {
+	environ := make(map[string]string, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if idx := strings.IndexByte(kv, '='); idx > 0 {
+			environ[kv[:idx]] = kv[idx+1:]
+		}
+	}
+	cmdArgs := append([]string{command}, args...)
+	return &procmeta.ProcessMetadata{
+		Environ:     environ,
+		Args:        cmdArgs,
+		CmdlineFull: strings.Join(cmdArgs, " "),
+	}
 }
 
 func executeCommand(cfg *config.Config, loader *bpfloader.Loader) error {

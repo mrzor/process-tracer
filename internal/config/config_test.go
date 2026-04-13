@@ -14,7 +14,7 @@ const testTraceID = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
 
 func TestBuildTraceConfig_BasicCommand(t *testing.T) {
 	envCfg := &EnvConfig{}
-	cfg, err := BuildTraceConfig(envCfg, "", "", nil, false, []string{"echo", "hello"})
+	cfg, err := BuildTraceConfig(envCfg, "", "", nil, false, false, []string{"echo", "hello"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "echo", cfg.Command)
@@ -25,7 +25,7 @@ func TestBuildTraceConfig_BasicCommand(t *testing.T) {
 
 func TestBuildTraceConfig_WithTraceID(t *testing.T) {
 	envCfg := &EnvConfig{}
-	cfg, err := BuildTraceConfig(envCfg, testTraceID, "", nil, false, []string{"ls"})
+	cfg, err := BuildTraceConfig(envCfg, testTraceID, "", nil, false, false, []string{"ls"})
 
 	require.NoError(t, err)
 	assert.Equal(t, testTraceID, cfg.TraceID)
@@ -34,7 +34,7 @@ func TestBuildTraceConfig_WithTraceID(t *testing.T) {
 
 func TestBuildTraceConfig_WithParentID(t *testing.T) {
 	envCfg := &EnvConfig{}
-	cfg, err := BuildTraceConfig(envCfg, "", testParentID, nil, false, []string{"ls"})
+	cfg, err := BuildTraceConfig(envCfg, "", testParentID, nil, false, false, []string{"ls"})
 
 	require.NoError(t, err)
 	assert.Equal(t, testParentID, cfg.ParentID)
@@ -42,7 +42,7 @@ func TestBuildTraceConfig_WithParentID(t *testing.T) {
 
 func TestBuildTraceConfig_WithTraceIDAndParentID(t *testing.T) {
 	envCfg := &EnvConfig{}
-	cfg, err := BuildTraceConfig(envCfg, testTraceID, testParentID, nil, false, []string{"ls"})
+	cfg, err := BuildTraceConfig(envCfg, testTraceID, testParentID, nil, false, false, []string{"ls"})
 
 	require.NoError(t, err)
 	assert.Equal(t, testTraceID, cfg.TraceID)
@@ -55,7 +55,7 @@ func TestBuildTraceConfig_CustomAttributes(t *testing.T) {
 		{Name: "foo", Expression: "bar"},
 		{Name: "env_name", Expression: "env[\"ENVIRONMENT\"]"},
 	}
-	cfg, err := BuildTraceConfig(envCfg, "", "", attrs, false, []string{"echo", "test"})
+	cfg, err := BuildTraceConfig(envCfg, "", "", attrs, false, false, []string{"echo", "test"})
 
 	require.NoError(t, err)
 	require.Len(t, cfg.CustomAttributes, 2)
@@ -66,7 +66,7 @@ func TestBuildTraceConfig_CustomAttributes(t *testing.T) {
 
 func TestBuildTraceConfig_MissingCommand(t *testing.T) {
 	envCfg := &EnvConfig{}
-	_, err := BuildTraceConfig(envCfg, "", "", nil, false, []string{})
+	_, err := BuildTraceConfig(envCfg, "", "", nil, false, false, []string{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no command specified")
@@ -79,7 +79,7 @@ func TestBuildTraceConfig_EnvVarFallback(t *testing.T) {
 		Attributes: "env_attr=env_value",
 	}
 
-	cfg, err := BuildTraceConfig(envCfg, "", "", nil, false, []string{"echo", "test"})
+	cfg, err := BuildTraceConfig(envCfg, "", "", nil, false, false, []string{"echo", "test"})
 	require.NoError(t, err)
 	assert.Equal(t, "env_trace", cfg.TraceID)
 	assert.Equal(t, "env_parent", cfg.ParentID)
@@ -94,7 +94,7 @@ func TestBuildTraceConfig_CLIOverridesEnv(t *testing.T) {
 		ParentID: "env_parent",
 	}
 
-	cfg, err := BuildTraceConfig(envCfg, "cli_trace", "cli_parent", nil, false, []string{"echo", "test"})
+	cfg, err := BuildTraceConfig(envCfg, "cli_trace", "cli_parent", nil, false, false, []string{"echo", "test"})
 	require.NoError(t, err)
 	assert.Equal(t, "cli_trace", cfg.TraceID)
 	assert.Equal(t, "cli_parent", cfg.ParentID)
@@ -108,7 +108,7 @@ func TestBuildTraceConfig_AttributesMerge(t *testing.T) {
 		{Name: "cli_attr", Expression: "cli_val"},
 	}
 
-	cfg, err := BuildTraceConfig(envCfg, "", "", cliAttrs, false, []string{"echo", "test"})
+	cfg, err := BuildTraceConfig(envCfg, "", "", cliAttrs, false, false, []string{"echo", "test"})
 	require.NoError(t, err)
 	require.Len(t, cfg.CustomAttributes, 2)
 	assert.Equal(t, "env_attr", cfg.CustomAttributes[0].Name) // Env comes first
@@ -117,7 +117,7 @@ func TestBuildTraceConfig_AttributesMerge(t *testing.T) {
 
 func TestBuildTraceConfig_SkipEmptyValues(t *testing.T) {
 	envCfg := &EnvConfig{}
-	cfg, err := BuildTraceConfig(envCfg, "", "", nil, true, []string{"echo"})
+	cfg, err := BuildTraceConfig(envCfg, "", "", nil, true, false, []string{"echo"})
 
 	require.NoError(t, err)
 	assert.True(t, cfg.SkipEmptyValues)
@@ -132,7 +132,7 @@ func TestBuildTraceConfig_ComplexScenario(t *testing.T) {
 	}
 
 	envCfg := &EnvConfig{}
-	cfg, err := BuildTraceConfig(envCfg, traceID, "", attrs, false, []string{"docker", "run", "-it", "ubuntu", "bash"})
+	cfg, err := BuildTraceConfig(envCfg, traceID, "", attrs, false, false, []string{"docker", "run", "-it", "ubuntu", "bash"})
 	require.NoError(t, err)
 	assert.Equal(t, traceID, cfg.TraceID)
 	assert.Equal(t, "docker", cfg.Command)

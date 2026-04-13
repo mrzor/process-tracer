@@ -2,6 +2,10 @@ rules:
   - name: "e2e-make"
     match:
       command: "make"
+    # add_debug_attributes emits debug.argv + debug.environ on every span and
+    # debug.trace_id.*/debug.parent_id.* provenance on the root span. Enabled
+    # on this rule only — e2e-perl should NOT get these attrs (per-rule scoping).
+    add_debug_attributes: true
     attributes:
       service.name: "ambient-e2e-make"
       build.id: 'expr:env["BUILD_ID"]'

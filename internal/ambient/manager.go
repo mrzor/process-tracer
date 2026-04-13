@@ -89,6 +89,7 @@ func (m *SessionManager) CreateSession(pid uint32, rule *config.AmbientRule, met
 		rule.SkipEmptyValues,
 		rule.TraceID,
 		rule.ParentID,
+		rule.AddDebugAttributes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("creating formatter: %w", err)

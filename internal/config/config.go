@@ -38,6 +38,9 @@ type Config struct {
 	CustomAttributes []CustomAttribute
 	// SkipEmptyValues omits custom attributes whose value evaluates to an empty string
 	SkipEmptyValues bool
+	// AddDebugAttributes emits debug.* span attributes (argv, environ, trace/parent-id
+	// provenance). May leak secrets; opt-in only.
+	AddDebugAttributes bool
 }
 
 // EnvConfig holds process-tracer configuration from environment variables.
@@ -309,7 +312,7 @@ func ParseSymlinkMode(args []string, envCfg *EnvConfig) (*Config, error) {
 
 // BuildTraceConfig merges CLI-provided values with environment config to produce a Config.
 // CLI values take precedence over environment values.
-func BuildTraceConfig(envCfg *EnvConfig, traceID, parentID string, cliAttrs []CustomAttribute, skipEmptyValues bool, cmdArgs []string) (*Config, error) {
+func BuildTraceConfig(envCfg *EnvConfig, traceID, parentID string, cliAttrs []CustomAttribute, skipEmptyValues, addDebugAttributes bool, cmdArgs []string) (*Config, error) {
 	if len(cmdArgs) == 0 {
 		return nil, fmt.Errorf("no command specified")
 	}
@@ -337,12 +340,13 @@ func BuildTraceConfig(envCfg *EnvConfig, traceID, parentID string, cliAttrs []Cu
 	finalAttrs = append(finalAttrs, cliAttrs...)
 
 	return &Config{
-		Command:          cmdArgs[0],
-		Args:             cmdArgs[1:],
-		TraceID:          finalTraceID,
-		ParentID:         finalParentID,
-		CustomAttributes: finalAttrs,
-		SkipEmptyValues:  skipEmptyValues,
+		Command:            cmdArgs[0],
+		Args:               cmdArgs[1:],
+		TraceID:            finalTraceID,
+		ParentID:           finalParentID,
+		CustomAttributes:   finalAttrs,
+		SkipEmptyValues:    skipEmptyValues,
+		AddDebugAttributes: addDebugAttributes,
 	}, nil
 }
 

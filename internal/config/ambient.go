@@ -17,12 +17,13 @@ type AmbientConfig struct {
 
 // AmbientRule defines a process matching rule and its tracing configuration.
 type AmbientRule struct {
-	Name            string            `yaml:"name"`
-	Match           AmbientMatch      `yaml:"match"`
-	Attributes      map[string]string `yaml:"attributes"`
-	SkipEmptyValues bool              `yaml:"skip_empty_values"`
-	TraceID         string            `yaml:"trace_id"`
-	ParentID        string            `yaml:"parent_id"`
+	Name               string            `yaml:"name"`
+	Match              AmbientMatch      `yaml:"match"`
+	Attributes         map[string]string `yaml:"attributes"`
+	SkipEmptyValues    bool              `yaml:"skip_empty_values"`
+	TraceID            string            `yaml:"trace_id"`
+	ParentID           string            `yaml:"parent_id"`
+	AddDebugAttributes bool              `yaml:"add_debug_attributes"`
 }
 
 // AmbientMatch defines the criteria for matching a process.

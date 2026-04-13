@@ -11,6 +11,7 @@ chmod +x /tmp/process-tracer
 echo "[guest] Running traced make..."
 OTEL_EXPORTER_OTLP_ENDPOINT="http://10.0.2.2:4318" \
   /tmp/process-tracer trace \
+    --add-debug-attributes \
     -a service.name=trace-e2e-make \
     -a build.id=make-run-42 \
     -- make -f /tmp/Makefile.test

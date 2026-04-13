@@ -31,6 +31,7 @@ func traceCommand() *cli.Command {
 	var traceID string
 	var parentID string
 	var skipEmptyValues bool
+	var addDebugAttributes bool
 	var attrArgs []string
 
 	return &cli.Command{
@@ -78,6 +79,11 @@ func traceCommand() *cli.Command {
 				Usage:       "Omit custom attributes whose value evaluates to an empty string",
 				Destination: &skipEmptyValues,
 			},
+			&cli.BoolFlag{
+				Name:        "add-debug-attributes",
+				Usage:       "Add debug.* span attributes (argv, environ, trace/parent-id provenance). May leak secrets.",
+				Destination: &addDebugAttributes,
+			},
 		},
 		UseShortOptionHandling: true,
 		Action: func(_ context.Context, cmd *cli.Command) error {
@@ -94,7 +100,7 @@ func traceCommand() *cli.Command {
 				}
 			}
 
-			cfg, err := config.BuildTraceConfig(envCfg, traceID, parentID, customAttrs, skipEmptyValues, cmd.Args().Slice())
+			cfg, err := config.BuildTraceConfig(envCfg, traceID, parentID, customAttrs, skipEmptyValues, addDebugAttributes, cmd.Args().Slice())
 			if err != nil {
 				return fmt.Errorf("%w\n\nUse '--' to separate options from the command to trace.\n\nExample: process-tracer trace -a service.name=my-svc -- bash -c 'echo hello'", err)
 			}
@@ -242,6 +248,7 @@ func setupComponents(cfg *config.Config, tracer trace.Tracer, rd *ringbuf.Reader
 		cfg.SkipEmptyValues,
 		cfg.TraceID,
 		cfg.ParentID,
+		cfg.AddDebugAttributes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTEL formatter: %w", err)

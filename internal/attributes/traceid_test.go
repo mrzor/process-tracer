@@ -15,7 +15,7 @@ func TestTraceIDEvaluator_LiteralValidHex(t *testing.T) {
 		t.Fatalf("NewTraceIDEvaluator() error = %v", err)
 	}
 
-	traceID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	traceID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -31,6 +31,22 @@ func TestTraceIDEvaluator_LiteralValidHex(t *testing.T) {
 	if traceID != expected {
 		t.Errorf("traceID = %v, want %v", traceID, expected)
 	}
+
+	if res.Source != SourceLiteral {
+		t.Errorf("Source = %q, want %q", res.Source, SourceLiteral)
+	}
+	if res.Validation != ValidationValid {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationValid)
+	}
+	if res.ResolvedValue != "0123456789abcdef0123456789abcdef" {
+		t.Errorf("ResolvedValue = %q, want input", res.ResolvedValue)
+	}
+	if res.Expression != "" {
+		t.Errorf("Expression should be empty for literal, got %q", res.Expression)
+	}
+	if res.Error != "" {
+		t.Errorf("Error should be empty, got %q", res.Error)
+	}
 }
 
 func TestTraceIDEvaluator_LiteralInvalidHex(t *testing.T) {
@@ -40,7 +56,7 @@ func TestTraceIDEvaluator_LiteralInvalidHex(t *testing.T) {
 		t.Fatalf("NewTraceIDEvaluator() error = %v", err)
 	}
 
-	traceID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	traceID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -52,6 +68,16 @@ func TestTraceIDEvaluator_LiteralInvalidHex(t *testing.T) {
 	if len(warnings) != 2 {
 		t.Errorf("Expected 2 warnings for invalid literal trace ID, got %d", len(warnings))
 	}
+
+	if res.Source != SourceLiteral {
+		t.Errorf("Source = %q, want %q", res.Source, SourceLiteral)
+	}
+	if res.Validation != ValidationHashed {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationHashed)
+	}
+	if res.ResolvedValue != "my-build-id-123" {
+		t.Errorf("ResolvedValue = %q, want input", res.ResolvedValue)
+	}
 }
 
 func TestTraceIDEvaluator_Empty(t *testing.T) {
@@ -60,7 +86,7 @@ func TestTraceIDEvaluator_Empty(t *testing.T) {
 		t.Fatalf("NewTraceIDEvaluator(\"\") error = %v", err)
 	}
 
-	traceID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	traceID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -70,6 +96,16 @@ func TestTraceIDEvaluator_Empty(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Errorf("Expected no warnings, got %d", len(warnings))
+	}
+
+	if res.Source != SourceUnconfigured {
+		t.Errorf("Source = %q, want %q", res.Source, SourceUnconfigured)
+	}
+	if res.Validation != ValidationNone {
+		t.Errorf("Validation = %q, want empty", res.Validation)
+	}
+	if res.ResolvedValue != "" {
+		t.Errorf("ResolvedValue should be empty, got %q", res.ResolvedValue)
 	}
 }
 
@@ -87,7 +123,7 @@ func TestTraceIDEvaluator_ExprValidHex(t *testing.T) {
 		CmdlineFull: "",
 	}
 
-	traceID, warnings, err := evaluator.EvaluateAndValidate(metadata)
+	traceID, warnings, res, err := evaluator.EvaluateAndValidate(metadata)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -103,6 +139,19 @@ func TestTraceIDEvaluator_ExprValidHex(t *testing.T) {
 	if traceID != expected {
 		t.Errorf("traceID = %v, want %v", traceID, expected)
 	}
+
+	if res.Source != SourceExpr {
+		t.Errorf("Source = %q, want %q", res.Source, SourceExpr)
+	}
+	if res.Expression != `env["TRACE_ID"]` {
+		t.Errorf("Expression = %q, want the expr body", res.Expression)
+	}
+	if res.ResolvedValue != "0123456789abcdef0123456789abcdef" {
+		t.Errorf("ResolvedValue = %q", res.ResolvedValue)
+	}
+	if res.Validation != ValidationValid {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationValid)
+	}
 }
 
 func TestTraceIDEvaluator_ExprInvalidHex(t *testing.T) {
@@ -117,7 +166,7 @@ func TestTraceIDEvaluator_ExprInvalidHex(t *testing.T) {
 		CmdlineFull: "",
 	}
 
-	traceID, warnings, err := evaluator.EvaluateAndValidate(metadata)
+	traceID, warnings, res, err := evaluator.EvaluateAndValidate(metadata)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -128,6 +177,38 @@ func TestTraceIDEvaluator_ExprInvalidHex(t *testing.T) {
 	if len(warnings) != 2 {
 		t.Errorf("Expected 2 warnings, got %d", len(warnings))
 	}
+
+	if res.Source != SourceExpr {
+		t.Errorf("Source = %q, want %q", res.Source, SourceExpr)
+	}
+	if res.Validation != ValidationHashed {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationHashed)
+	}
+	if res.ResolvedValue != "short" {
+		t.Errorf("ResolvedValue = %q, want %q", res.ResolvedValue, "short")
+	}
+}
+
+func TestTraceIDEvaluator_ExprRuntimeError(t *testing.T) {
+	// Expression that compiles but fails at runtime (nil metadata → no env map).
+	evaluator, err := NewTraceIDEvaluator(`expr:env["TRACE_ID"]`)
+	if err != nil {
+		t.Fatalf("NewTraceIDEvaluator() error = %v", err)
+	}
+
+	_, _, res, err := evaluator.EvaluateAndValidate(nil)
+	if err == nil {
+		t.Fatal("Expected error for nil metadata")
+	}
+	if res.Source != SourceExpr {
+		t.Errorf("Source = %q, want %q", res.Source, SourceExpr)
+	}
+	if res.Validation != ValidationError {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationError)
+	}
+	if res.Error == "" {
+		t.Error("Expected non-empty Error field")
+	}
 }
 
 func TestTraceIDEvaluator_ExprCompileFailure_DefaultsToEmpty(t *testing.T) {
@@ -137,7 +218,7 @@ func TestTraceIDEvaluator_ExprCompileFailure_DefaultsToEmpty(t *testing.T) {
 		t.Fatalf("NewTraceIDEvaluator() should not error, got: %v", err)
 	}
 
-	traceID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	traceID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -147,6 +228,9 @@ func TestTraceIDEvaluator_ExprCompileFailure_DefaultsToEmpty(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Errorf("Expected no warnings, got %d", len(warnings))
+	}
+	if res.Source != SourceUnconfigured {
+		t.Errorf("Source = %q, want %q (compile-failure falls back to empty)", res.Source, SourceUnconfigured)
 	}
 }
 
@@ -158,7 +242,7 @@ func TestParentIDEvaluator_LiteralValidHex(t *testing.T) {
 		t.Fatalf("NewParentIDEvaluator() error = %v", err)
 	}
 
-	spanID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	spanID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -174,6 +258,16 @@ func TestParentIDEvaluator_LiteralValidHex(t *testing.T) {
 	if spanID != expected {
 		t.Errorf("spanID = %v, want %v", spanID, expected)
 	}
+
+	if res.Source != SourceLiteral {
+		t.Errorf("Source = %q, want %q", res.Source, SourceLiteral)
+	}
+	if res.Validation != ValidationValid {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationValid)
+	}
+	if res.ResolvedValue != "0123456789abcdef" {
+		t.Errorf("ResolvedValue = %q", res.ResolvedValue)
+	}
 }
 
 func TestParentIDEvaluator_LiteralInvalidHex(t *testing.T) {
@@ -182,7 +276,7 @@ func TestParentIDEvaluator_LiteralInvalidHex(t *testing.T) {
 		t.Fatalf("NewParentIDEvaluator() error = %v", err)
 	}
 
-	spanID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	spanID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -193,6 +287,16 @@ func TestParentIDEvaluator_LiteralInvalidHex(t *testing.T) {
 	if len(warnings) != 2 {
 		t.Errorf("Expected 2 warnings, got %d", len(warnings))
 	}
+
+	if res.Source != SourceLiteral {
+		t.Errorf("Source = %q, want %q", res.Source, SourceLiteral)
+	}
+	if res.Validation != ValidationInvalid {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationInvalid)
+	}
+	if res.ResolvedValue != "not-valid" {
+		t.Errorf("ResolvedValue = %q", res.ResolvedValue)
+	}
 }
 
 func TestParentIDEvaluator_Empty(t *testing.T) {
@@ -201,7 +305,7 @@ func TestParentIDEvaluator_Empty(t *testing.T) {
 		t.Fatalf("NewParentIDEvaluator(\"\") error = %v", err)
 	}
 
-	spanID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	spanID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -211,6 +315,10 @@ func TestParentIDEvaluator_Empty(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Errorf("Expected no warnings, got %d", len(warnings))
+	}
+
+	if res.Source != SourceUnconfigured {
+		t.Errorf("Source = %q, want %q", res.Source, SourceUnconfigured)
 	}
 }
 
@@ -228,7 +336,7 @@ func TestParentIDEvaluator_ExprValidHex(t *testing.T) {
 		CmdlineFull: "",
 	}
 
-	spanID, warnings, err := evaluator.EvaluateAndValidate(metadata)
+	spanID, warnings, res, err := evaluator.EvaluateAndValidate(metadata)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -244,6 +352,16 @@ func TestParentIDEvaluator_ExprValidHex(t *testing.T) {
 	if spanID != expected {
 		t.Errorf("spanID = %v, want %v", spanID, expected)
 	}
+
+	if res.Source != SourceExpr {
+		t.Errorf("Source = %q, want %q", res.Source, SourceExpr)
+	}
+	if res.Expression != `env["PARENT_SPAN_ID"]` {
+		t.Errorf("Expression = %q", res.Expression)
+	}
+	if res.Validation != ValidationValid {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationValid)
+	}
 }
 
 func TestParentIDEvaluator_ExprInvalidHex(t *testing.T) {
@@ -258,7 +376,7 @@ func TestParentIDEvaluator_ExprInvalidHex(t *testing.T) {
 		CmdlineFull: "",
 	}
 
-	spanID, warnings, err := evaluator.EvaluateAndValidate(metadata)
+	spanID, warnings, res, err := evaluator.EvaluateAndValidate(metadata)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -269,6 +387,31 @@ func TestParentIDEvaluator_ExprInvalidHex(t *testing.T) {
 	if len(warnings) != 2 {
 		t.Errorf("Expected 2 warnings, got %d", len(warnings))
 	}
+
+	if res.Validation != ValidationInvalid {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationInvalid)
+	}
+	if res.ResolvedValue != "notvalid" {
+		t.Errorf("ResolvedValue = %q", res.ResolvedValue)
+	}
+}
+
+func TestParentIDEvaluator_ExprRuntimeError(t *testing.T) {
+	evaluator, err := NewParentIDEvaluator(`expr:env["PARENT_SPAN_ID"]`)
+	if err != nil {
+		t.Fatalf("NewParentIDEvaluator() error = %v", err)
+	}
+
+	_, _, res, err := evaluator.EvaluateAndValidate(nil)
+	if err == nil {
+		t.Fatal("Expected error for nil metadata")
+	}
+	if res.Validation != ValidationError {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationError)
+	}
+	if res.Error == "" {
+		t.Error("Expected non-empty Error field")
+	}
 }
 
 func TestParentIDEvaluator_ExprCompileFailure_DefaultsToEmpty(t *testing.T) {
@@ -278,7 +421,7 @@ func TestParentIDEvaluator_ExprCompileFailure_DefaultsToEmpty(t *testing.T) {
 		t.Fatalf("NewParentIDEvaluator() should not error, got: %v", err)
 	}
 
-	spanID, warnings, err := evaluator.EvaluateAndValidate(nil)
+	spanID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
 	if err != nil {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
@@ -288,5 +431,8 @@ func TestParentIDEvaluator_ExprCompileFailure_DefaultsToEmpty(t *testing.T) {
 	}
 	if len(warnings) != 0 {
 		t.Errorf("Expected no warnings, got %d", len(warnings))
+	}
+	if res.Source != SourceUnconfigured {
+		t.Errorf("Source = %q, want %q", res.Source, SourceUnconfigured)
 	}
 }

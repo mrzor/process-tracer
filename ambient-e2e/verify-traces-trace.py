@@ -26,14 +26,16 @@ class Span:
     trace_id: str
     span_id: str
     parent_span_id: str
-    attrs: dict[str, str | int] = field(default_factory=dict)
+    attrs: dict[str, str | int | list] = field(default_factory=dict)
 
 
-def _parse_attr_value(v: dict) -> str | int:
+def _parse_attr_value(v: dict) -> str | int | list:
     if "stringValue" in v:
         return v["stringValue"]
     if "intValue" in v:
         return int(v["intValue"])
+    if "arrayValue" in v:
+        return [_parse_attr_value(item) for item in v["arrayValue"].get("values", [])]
     return str(v)
 
 
@@ -174,6 +176,54 @@ def test_resource_service_name(resource_spans):
             if a["key"] == "service.name":
                 names.add(a["value"].get("stringValue", ""))
     assert names == {"sched_trace"}, f"got {names}"
+
+
+# -- Debug attributes (--add-debug-attributes enabled in guest-run-trace.sh) --
+
+
+def test_debug_argv_on_every_span(all_spans):
+    """debug.argv should be present on every span when --add-debug-attributes is set."""
+    for s in all_spans:
+        argv = s.attrs.get("debug.argv")
+        assert isinstance(argv, list) and len(argv) > 0, \
+            f"span {s.span_id} ({s.attrs.get('process.command')}) missing debug.argv, got: {argv!r}"
+
+
+def test_debug_environ_present(all_spans):
+    """debug.environ should be present on every span and non-empty."""
+    for s in all_spans:
+        environ = s.attrs.get("debug.environ")
+        assert isinstance(environ, list) and len(environ) > 0, \
+            f"span {s.span_id} missing debug.environ"
+
+
+def test_root_debug_trace_id_unconfigured(all_spans):
+    """No -t flag → trace_id source=unconfigured on the root span."""
+    root = _root_span(all_spans)
+    assert root is not None
+    assert root.attrs.get("debug.trace_id.source") == "unconfigured", \
+        f"got {root.attrs.get('debug.trace_id.source')!r}"
+
+
+def test_root_debug_parent_id_unconfigured(all_spans):
+    """No -p flag → parent_id source=unconfigured."""
+    root = _root_span(all_spans)
+    assert root is not None
+    assert root.attrs.get("debug.parent_id.source") == "unconfigured", \
+        f"got {root.attrs.get('debug.parent_id.source')!r}"
+
+
+def test_non_root_spans_lack_root_debug_attrs(all_spans):
+    """debug.trace_id.*/debug.parent_id.* should only be on the root span."""
+    root = _root_span(all_spans)
+    assert root is not None
+    for s in all_spans:
+        if s.span_id == root.span_id:
+            continue
+        assert "debug.trace_id.source" not in s.attrs, \
+            f"non-root span {s.span_id} has debug.trace_id.source"
+        assert "debug.parent_id.source" not in s.attrs, \
+            f"non-root span {s.span_id} has debug.parent_id.source"
 
 
 # -- Entry point --

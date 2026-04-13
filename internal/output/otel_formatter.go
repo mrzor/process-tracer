@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 
 	"github.com/mrzor/process-tracer/internal/attributes"
@@ -33,20 +34,22 @@ type tcpSpanInfo struct {
 // OTELFormatter formats processed data as OpenTelemetry spans.
 // This is a pure formatting layer - it receives pre-processed data and creates spans.
 type OTELFormatter struct {
-	tracer            trace.Tracer
-	converter         *timesync.Converter
-	resolver          *reversedns.Resolver
-	metadataManager   *procmeta.Manager
-	attrEvaluator     *attributes.Evaluator
-	traceIDEvaluator  *attributes.TraceIDEvaluator
-	parentIDEvaluator *attributes.ParentIDEvaluator
+	tracer             trace.Tracer
+	converter          *timesync.Converter
+	resolver           *reversedns.Resolver
+	metadataManager    *procmeta.Manager
+	attrEvaluator      *attributes.Evaluator
+	traceIDEvaluator   *attributes.TraceIDEvaluator
+	parentIDEvaluator  *attributes.ParentIDEvaluator
+	addDebugAttributes bool
 
 	// Span tracking
-	spans            map[uint32]*processSpanInfo // PID -> span info
-	tcpSpans         map[uint64]*tcpSpanInfo     // socket addr -> TCP span info
-	traceID          trace.TraceID               // root trace ID
-	rootSpanPID      uint32                      // PID of the root span (0 if not set)
-	rootSpanWarnings []attribute.KeyValue        // warnings to attach to root span
+	spans              map[uint32]*processSpanInfo // PID -> span info
+	tcpSpans           map[uint64]*tcpSpanInfo     // socket addr -> TCP span info
+	traceID            trace.TraceID               // root trace ID
+	rootSpanPID        uint32                      // PID of the root span (0 if not set)
+	rootSpanWarnings   []attribute.KeyValue        // warnings to attach to root span
+	rootSpanDebugAttrs []attribute.KeyValue        // debug provenance to attach to root span
 }
 
 // NewOTELFormatter creates a new OTEL formatter.
@@ -59,6 +62,7 @@ func NewOTELFormatter(
 	skipEmptyValues bool,
 	traceIDExpr string,
 	parentIDExpr string,
+	addDebugAttributes bool,
 ) (*OTELFormatter, error) {
 	// Create attribute evaluator
 	attrEvaluator, err := attributes.NewEvaluator(customAttrs, skipEmptyValues)
@@ -79,17 +83,18 @@ func NewOTELFormatter(
 	}
 
 	return &OTELFormatter{
-		tracer:            tracer,
-		converter:         converter,
-		resolver:          resolver,
-		metadataManager:   metadataManager,
-		attrEvaluator:     attrEvaluator,
-		traceIDEvaluator:  traceIDEvaluator,
-		parentIDEvaluator: parentIDEvaluator,
-		spans:             make(map[uint32]*processSpanInfo),
-		tcpSpans:          make(map[uint64]*tcpSpanInfo),
-		rootSpanPID:       0,
-		rootSpanWarnings:  nil,
+		tracer:             tracer,
+		converter:          converter,
+		resolver:           resolver,
+		metadataManager:    metadataManager,
+		attrEvaluator:      attrEvaluator,
+		traceIDEvaluator:   traceIDEvaluator,
+		parentIDEvaluator:  parentIDEvaluator,
+		addDebugAttributes: addDebugAttributes,
+		spans:              make(map[uint32]*processSpanInfo),
+		tcpSpans:           make(map[uint64]*tcpSpanInfo),
+		rootSpanPID:        0,
+		rootSpanWarnings:   nil,
 	}, nil
 }
 
@@ -139,10 +144,11 @@ func (f *OTELFormatter) createRootSpanContext(ctx context.Context, _ uint32, met
 	var customTraceID trace.TraceID
 	var customParentID trace.SpanID
 	var allWarnings []attribute.KeyValue
+	var debugAttrs []attribute.KeyValue
 
 	// Evaluate trace-id if expression is provided
 	if metadata != nil {
-		traceID, warnings, err := f.traceIDEvaluator.EvaluateAndValidate(metadata)
+		traceID, warnings, traceRes, err := f.traceIDEvaluator.EvaluateAndValidate(metadata)
 		if err != nil {
 			// Metadata not available yet or evaluation failed
 			allWarnings = append(allWarnings,
@@ -154,7 +160,7 @@ func (f *OTELFormatter) createRootSpanContext(ctx context.Context, _ uint32, met
 		}
 
 		// Evaluate parent-id if expression is provided
-		parentID, warnings, err := f.parentIDEvaluator.EvaluateAndValidate(metadata)
+		parentID, parentWarnings, parentRes, err := f.parentIDEvaluator.EvaluateAndValidate(metadata)
 		if err != nil {
 			// Metadata not available yet or evaluation failed - use zero span ID
 			allWarnings = append(allWarnings,
@@ -162,13 +168,21 @@ func (f *OTELFormatter) createRootSpanContext(ctx context.Context, _ uint32, met
 			)
 		} else {
 			customParentID = parentID
-			allWarnings = append(allWarnings, warnings...)
+			allWarnings = append(allWarnings, parentWarnings...)
+		}
+
+		if f.addDebugAttributes {
+			debugAttrs = append(debugAttrs, traceIDResolutionAttrs(traceRes)...)
+			debugAttrs = append(debugAttrs, parentIDResolutionAttrs(parentRes)...)
 		}
 	}
 
-	// Store warnings to add to the span later
+	// Store warnings + debug attrs to add to the root span at exit time.
 	if len(allWarnings) > 0 {
 		f.rootSpanWarnings = allWarnings
+	}
+	if len(debugAttrs) > 0 {
+		f.rootSpanDebugAttrs = debugAttrs
 	}
 
 	// Create custom span context to inject trace ID and/or parent ID
@@ -199,6 +213,57 @@ func (f *OTELFormatter) createRootSpanContext(ctx context.Context, _ uint32, met
 	}
 
 	return ctx, nil
+}
+
+// environToSlice converts an env map to a sorted []string of "KEY=VALUE" entries.
+// Sorted so that repeated runs produce stable output, easing diffing.
+func environToSlice(env map[string]string) []string {
+	out := make([]string, 0, len(env))
+	for k, v := range env {
+		out = append(out, k+"="+v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// traceIDResolutionAttrs converts a TraceIDResolution into debug.trace_id.* attributes.
+//
+//nolint:dupl // structurally similar to parentIDResolutionAttrs but the attribute keys differ
+func traceIDResolutionAttrs(res attributes.TraceIDResolution) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{attribute.String("debug.trace_id.source", res.Source)}
+	if res.Expression != "" {
+		attrs = append(attrs, attribute.String("debug.trace_id.expression", res.Expression))
+	}
+	if res.Source != attributes.SourceUnconfigured {
+		attrs = append(attrs, attribute.String("debug.trace_id.resolved_value", res.ResolvedValue))
+	}
+	if res.Validation != attributes.ValidationNone {
+		attrs = append(attrs, attribute.String("debug.trace_id.validation", res.Validation))
+	}
+	if res.Error != "" {
+		attrs = append(attrs, attribute.String("debug.trace_id.error", res.Error))
+	}
+	return attrs
+}
+
+// parentIDResolutionAttrs converts a ParentIDResolution into debug.parent_id.* attributes.
+//
+//nolint:dupl // structurally similar to traceIDResolutionAttrs but the attribute keys differ
+func parentIDResolutionAttrs(res attributes.ParentIDResolution) []attribute.KeyValue {
+	attrs := []attribute.KeyValue{attribute.String("debug.parent_id.source", res.Source)}
+	if res.Expression != "" {
+		attrs = append(attrs, attribute.String("debug.parent_id.expression", res.Expression))
+	}
+	if res.Source != attributes.SourceUnconfigured {
+		attrs = append(attrs, attribute.String("debug.parent_id.resolved_value", res.ResolvedValue))
+	}
+	if res.Validation != attributes.ValidationNone {
+		attrs = append(attrs, attribute.String("debug.parent_id.validation", res.Validation))
+	}
+	if res.Error != "" {
+		attrs = append(attrs, attribute.String("debug.parent_id.error", res.Error))
+	}
+	return attrs
 }
 
 // HandleProcessExit finalizes a process span.
@@ -243,6 +308,15 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 		spanInfo.Span.SetAttributes(customAttrs...)
 	}
 
+	// Add debug attributes (argv + environ) to every span when enabled.
+	// These may contain sensitive information and are gated behind an opt-in flag.
+	if f.addDebugAttributes && metadata != nil {
+		spanInfo.Span.SetAttributes(
+			attribute.StringSlice("debug.argv", metadata.Args),
+			attribute.StringSlice("debug.environ", environToSlice(metadata.Environ)),
+		)
+	}
+
 	// Add metadata collection errors as span attributes if any
 	if metaErr := f.metadataManager.GetError(pid); metaErr != nil {
 		spanInfo.Span.SetAttributes(
@@ -259,9 +333,14 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 		}
 	}
 
-	// Add root span warnings if this is the root span
-	if pid == f.rootSpanPID && len(f.rootSpanWarnings) > 0 {
-		spanInfo.Span.SetAttributes(f.rootSpanWarnings...)
+	// Add root-only attributes if this is the root span
+	if pid == f.rootSpanPID {
+		if len(f.rootSpanWarnings) > 0 {
+			spanInfo.Span.SetAttributes(f.rootSpanWarnings...)
+		}
+		if len(f.rootSpanDebugAttrs) > 0 {
+			spanInfo.Span.SetAttributes(f.rootSpanDebugAttrs...)
+		}
 	}
 
 	// End span with explicit end time

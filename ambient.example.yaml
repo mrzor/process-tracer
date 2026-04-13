@@ -34,6 +34,11 @@ rules:
       service.name: "deployment"
       deploy.env: 'expr:env["DEPLOY_ENV"]'
     trace_id: 'expr:env["DEPLOY_TRACE_ID"]'
+    # add_debug_attributes: when true, emits debug.argv, debug.environ, and
+    # debug.trace_id.*/debug.parent_id.* provenance attributes on spans. These
+    # may contain sensitive data (full environment, full argv) - enable only
+    # when investigating why trace_id/parent_id resolution is misbehaving.
+    # add_debug_attributes: true
 
 # Optional: override OTEL settings (otherwise uses standard OTEL_* env vars)
 # otel:

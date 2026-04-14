@@ -190,6 +190,23 @@ def test_span_names(all_spans):
     assert not bad, f"unexpected span names: {bad}"
 
 
+def test_process_tree_has_process_command(all_spans):
+    """Every process.tree span carries process.command from the matched process metadata."""
+    trees = [s for s in all_spans if s.name == "process.tree"]
+    assert trees, "no process.tree spans found"
+    for t in trees:
+        cmd = t.attrs.get("process.command")
+        assert cmd is not None, \
+            f"tree {t.span_id} missing process.command"
+        svc = t.attrs.get("service.name", "")
+        if "make" in svc:
+            assert cmd == "make", \
+                f"make tree {t.span_id} process.command={cmd!r}"
+        elif "perl" in svc:
+            assert cmd == "perl", \
+                f"perl tree {t.span_id} process.command={cmd!r}"
+
+
 def test_required_attributes(all_spans):
     """BPF-derived attrs are required on process.exec spans (not on synthetic process.tree)."""
     exec_spans = _exec_spans(all_spans)
@@ -286,11 +303,14 @@ class TestPipelineShape:
         ids = {t.span_id for t in make_trees}
         assert len(ids) == 3, f"process.tree spans collided on span_id: {ids}"
 
-    def test_distinct_virtual_parents(self, make_trees):
-        """Each session synthesizes a fresh virtual parent SpanID via
-        crypto/rand — so parent_span_ids differ across pipeline steps."""
+    def test_shared_parent_id(self, make_trees):
+        """All pipeline steps share a hashed parent SpanID from CI_JOB_ID.
+        sha256("make-job-1")[:8] as hex → deterministic shared parent."""
         parents = {t.parent_span_id for t in make_trees}
-        assert len(parents) == 3, f"trees share virtual parent: {parents}"
+        assert len(parents) == 1, f"trees have different parents: {parents}"
+        expected = hashlib.sha256(b"make-job-1").hexdigest()[:16]
+        assert parents == {expected}, \
+            f"parent_span_id mismatch: got {parents}, expected {{{expected}}}"
 
     def test_happens_before_across_steps(self, make_trees):
         """end(step_N) <= start(step_N+1). Hard invariant — the next `make`
@@ -404,6 +424,22 @@ class TestMakeAttributes:
             assert "BUILD_ID=make-run-42" in environ, \
                 f"span {s.span_id} debug.environ missing BUILD_ID entry"
 
+    def test_debug_argv_on_process_tree(self, make_trees):
+        """process.tree spans also get debug.argv when add_debug_attributes is enabled."""
+        for t in make_trees:
+            argv = t.attrs.get("debug.argv")
+            assert isinstance(argv, list) and len(argv) > 0, \
+                f"tree {t.span_id} missing debug.argv, got: {argv!r}"
+
+    def test_debug_environ_on_process_tree(self, make_trees):
+        """process.tree spans also get debug.environ when add_debug_attributes is enabled."""
+        for t in make_trees:
+            environ = t.attrs.get("debug.environ")
+            assert isinstance(environ, list) and len(environ) > 0, \
+                f"tree {t.span_id} missing debug.environ, got: {environ!r}"
+            assert "BUILD_ID=make-run-42" in environ, \
+                f"tree {t.span_id} debug.environ missing BUILD_ID entry"
+
 
 class TestArgvContent:
     """Verify that debug.argv captures the full argument vector, not just
@@ -493,8 +529,15 @@ class TestMakeRootDebugProvenance:
             # "make-run-42" is not valid 32-char hex → hashed fallback.
             assert tree.attrs.get("debug.trace_id.validation") == "hashed", \
                 f"tree {tree.span_id} debug.trace_id.validation={tree.attrs.get('debug.trace_id.validation')!r}"
-            assert tree.attrs.get("debug.parent_id.source") == "unconfigured", \
+            assert tree.attrs.get("debug.parent_id.source") == "expr", \
                 f"tree {tree.span_id} debug.parent_id.source={tree.attrs.get('debug.parent_id.source')!r}"
+            assert tree.attrs.get("debug.parent_id.expression") == 'env["CI_JOB_ID"]', \
+                f"tree {tree.span_id} debug.parent_id.expression={tree.attrs.get('debug.parent_id.expression')!r}"
+            assert tree.attrs.get("debug.parent_id.resolved_value") == "make-job-1", \
+                f"tree {tree.span_id} debug.parent_id.resolved_value={tree.attrs.get('debug.parent_id.resolved_value')!r}"
+            # "make-job-1" is not valid 16-char hex → hashed fallback.
+            assert tree.attrs.get("debug.parent_id.validation") == "hashed", \
+                f"tree {tree.span_id} debug.parent_id.validation={tree.attrs.get('debug.parent_id.validation')!r}"
 
     def test_non_root_spans_lack_root_debug_attrs(self, make_spans, make_trees):
         tree_ids = {t.span_id for t in make_trees}

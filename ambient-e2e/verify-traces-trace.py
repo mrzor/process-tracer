@@ -162,6 +162,14 @@ def test_process_tree_is_session_root(all_spans):
         f"process.tree parented by another session span: {tree.parent_span_id!r}"
 
 
+def test_process_tree_has_process_command(all_spans):
+    """process.tree span carries process.command from the traced command metadata."""
+    tree = _process_tree(all_spans)
+    assert tree is not None, "no process.tree span"
+    assert tree.attrs.get("process.command") == "make", \
+        f"tree process.command={tree.attrs.get('process.command')!r}, expected 'make'"
+
+
 def test_first_exec_is_make(all_spans):
     first = _first_exec(all_spans)
     assert first is not None, "no first exec under process.tree"

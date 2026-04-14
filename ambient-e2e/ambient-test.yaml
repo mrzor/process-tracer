@@ -5,6 +5,7 @@ rules:
     # trace_id from an env var, using expr. BUILD_ID is not valid hex so
     # this exercises the SHA-256-hashed fallback path in trace ID validation.
     trace_id: 'expr:env["BUILD_ID"]'
+    parent_id: 'expr:env["CI_JOB_ID"]'
     # add_debug_attributes emits debug.argv, debug.environ on every span and
     # debug.trace_id.*/debug.parent_id.* provenance on the root span. Enabled
     # on this rule only — e2e-perl should NOT get these attrs (per-rule scoping).

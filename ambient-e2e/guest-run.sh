@@ -30,6 +30,7 @@ ls /usr > /dev/null
 echo "[guest] Running pipeline (3 make invocations sharing BUILD_ID)..."
 export BUILD_ID="make-run-42"
 export BUILD_REGION="us-east-1"
+export CI_JOB_ID="make-job-1"
 make -f /tmp/Makefile.pipeline build
 make -f /tmp/Makefile.pipeline test-parallel -j3
 make -f /tmp/Makefile.pipeline deploy

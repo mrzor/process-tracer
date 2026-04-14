@@ -24,8 +24,8 @@ const (
 const (
 	ValidationNone    = ""        // unconfigured
 	ValidationValid   = "valid"   // parsed as proper hex ID
-	ValidationHashed  = "hashed"  // trace ID only: invalid hex, SHA-256 fallback used
-	ValidationInvalid = "invalid" // parent ID only: invalid hex, zero ID used
+	ValidationHashed  = "hashed"  // invalid hex, SHA-256 fallback used (both trace ID and parent ID)
+	ValidationInvalid = "invalid" // deprecated: parent ID now uses ValidationHashed like trace ID
 	ValidationError   = "error"   // expression evaluation failed
 )
 
@@ -43,7 +43,7 @@ type ParentIDResolution struct {
 	Source        string // one of SourceUnconfigured, SourceLiteral, SourceExpr
 	Expression    string // expr body (only when Source == SourceExpr)
 	ResolvedValue string // post-evaluation, pre-validation string (only when Source != SourceUnconfigured)
-	Validation    string // one of ValidationNone, ValidationValid, ValidationInvalid, ValidationError
+	Validation    string // one of ValidationNone, ValidationValid, ValidationHashed, ValidationError
 	Error         string // non-empty when Validation == ValidationError
 }
 
@@ -209,7 +209,8 @@ func NewParentIDEvaluator(value string) (*ParentIDEvaluator, error) {
 // EvaluateAndValidate evaluates the parent-id value and validates the result.
 // Returns the parent span ID, any warnings to attach to the span, a Resolution
 // describing how the ID was derived (for debug attributes), and an error.
-// If unconfigured or invalid, returns zero span ID (no parent).
+// If unconfigured, returns zero span ID (no parent). If the value is not valid
+// 16-char hex, it is SHA-256 hashed to produce a deterministic SpanID.
 func (e *ParentIDEvaluator) EvaluateAndValidate(metadata *procmeta.ProcessMetadata) (trace.SpanID, []attribute.KeyValue, ParentIDResolution, error) {
 	if e.program == nil && e.literal == "" {
 		return trace.SpanID{}, nil, ParentIDResolution{Source: SourceUnconfigured}, nil
@@ -233,19 +234,42 @@ func (e *ParentIDEvaluator) EvaluateAndValidate(metadata *procmeta.ProcessMetada
 	}
 	res.ResolvedValue = resultStr
 
-	// Try to parse as valid span ID (16 hex chars)
+	spanID, warnings, err := validateParentID(resultStr)
+	if err != nil {
+		res.Validation = ValidationError
+		res.Error = err.Error()
+		return spanID, warnings, res, err
+	}
+	if len(warnings) > 0 {
+		res.Validation = ValidationHashed
+	} else {
+		res.Validation = ValidationValid
+	}
+	return spanID, warnings, res, nil
+}
+
+// validateParentID checks whether resultStr is a valid 16-char hex span ID.
+// If not, it hashes the string with SHA-256 and returns warnings.
+func validateParentID(resultStr string) (trace.SpanID, []attribute.KeyValue, error) {
 	if len(resultStr) == 16 {
 		if spanID, err := trace.SpanIDFromHex(resultStr); err == nil {
-			res.Validation = ValidationValid
-			return spanID, nil, res, nil
+			return spanID, nil, nil
 		}
 	}
 
-	res.Validation = ValidationInvalid
-	warnings := []attribute.KeyValue{
-		attribute.String("_parent_id_expr_result", resultStr),
-		attribute.String("_parent_id_invalid_warning", fmt.Sprintf("Value %q is not a valid 16-char hex span ID, using null parent ID instead", resultStr)),
+	// Invalid span ID — hash with SHA-256
+	hash := sha256.Sum256([]byte(resultStr))
+	hashedSpanIDStr := hex.EncodeToString(hash[:8])
+
+	spanID, err := trace.SpanIDFromHex(hashedSpanIDStr)
+	if err != nil {
+		return trace.SpanID{}, nil, fmt.Errorf("failed to create span ID from hash: %w", err)
 	}
 
-	return trace.SpanID{}, warnings, res, nil
+	warnings := []attribute.KeyValue{
+		attribute.String("_parent_id_expr_result", resultStr),
+		attribute.String("_parent_id_invalid_warning", fmt.Sprintf("Value %q is not a valid 16-char hex span ID, used SHA-256 hash instead", resultStr)),
+	}
+
+	return spanID, warnings, nil
 }

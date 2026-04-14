@@ -13,6 +13,12 @@ rules:
       is_container_init: true
     skip_empty_values: true
     trace_id: 'expr:env["CI_PIPELINE_ID"]'
+    # parent_id: groups all sessions within the same CI job under a common
+    # parent span. CI_JOB_ID is not valid 16-char hex, so it's SHA-256 hashed
+    # to produce a deterministic SpanID. All docker exec invocations
+    # (before_script, script, after_script) sharing the same CI_JOB_ID will
+    # point to the same virtual parent, letting APM tools group them.
+    parent_id: 'expr:env["CI_JOB_ID"]'
     # add_debug_attributes: emits debug.argv, debug.environ on every span
     # plus debug.trace_id.*/debug.parent_id.* provenance on the process.tree
     # root. Useful when investigating why CI_PIPELINE_ID isn't producing the

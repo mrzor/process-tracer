@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -147,12 +148,32 @@ func (f *OTELFormatter) StartSession(ctx context.Context, metadata *procmeta.Pro
 	f.sessionRootSpan = span
 	f.sessionRootCtx = span.SpanContext()
 
+	// Attach process identity attributes from the matched process metadata.
+	if metadata != nil && len(metadata.Args) > 0 {
+		span.SetAttributes(
+			attribute.String("process.command", filepath.Base(metadata.Args[0])),
+		)
+		if metadata.CmdlineFull != "" {
+			span.SetAttributes(
+				attribute.String("process.command_line", metadata.CmdlineFull),
+			)
+		}
+	}
+
 	// Attach root-only attributes: warnings, debug provenance, and custom attrs.
 	if len(warnings) > 0 {
 		span.SetAttributes(warnings...)
 	}
 	if len(debugAttrs) > 0 {
 		span.SetAttributes(debugAttrs...)
+	}
+	if f.addDebugAttributes && metadata != nil {
+		if len(metadata.Args) > 0 {
+			span.SetAttributes(attribute.StringSlice("debug.argv", metadata.Args))
+		}
+		if len(metadata.Environ) > 0 {
+			span.SetAttributes(attribute.StringSlice("debug.environ", environToSlice(metadata.Environ)))
+		}
 	}
 	if metadata != nil {
 		if customAttrs, err := f.attrEvaluator.EvaluateCustomAttributes(metadata); err == nil && len(customAttrs) > 0 {

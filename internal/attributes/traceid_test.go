@@ -271,6 +271,7 @@ func TestParentIDEvaluator_LiteralValidHex(t *testing.T) {
 }
 
 func TestParentIDEvaluator_LiteralInvalidHex(t *testing.T) {
+	// Non-hex literal → gets SHA-256 hashed with warnings (like trace ID)
 	evaluator, err := NewParentIDEvaluator("not-valid")
 	if err != nil {
 		t.Fatalf("NewParentIDEvaluator() error = %v", err)
@@ -281,8 +282,8 @@ func TestParentIDEvaluator_LiteralInvalidHex(t *testing.T) {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
 
-	if spanID != (trace.SpanID{}) {
-		t.Error("Expected zero span ID for invalid literal")
+	if spanID == (trace.SpanID{}) {
+		t.Error("Expected non-zero span ID (hashed)")
 	}
 	if len(warnings) != 2 {
 		t.Errorf("Expected 2 warnings, got %d", len(warnings))
@@ -291,8 +292,8 @@ func TestParentIDEvaluator_LiteralInvalidHex(t *testing.T) {
 	if res.Source != SourceLiteral {
 		t.Errorf("Source = %q, want %q", res.Source, SourceLiteral)
 	}
-	if res.Validation != ValidationInvalid {
-		t.Errorf("Validation = %q, want %q", res.Validation, ValidationInvalid)
+	if res.Validation != ValidationHashed {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationHashed)
 	}
 	if res.ResolvedValue != "not-valid" {
 		t.Errorf("ResolvedValue = %q", res.ResolvedValue)
@@ -381,15 +382,15 @@ func TestParentIDEvaluator_ExprInvalidHex(t *testing.T) {
 		t.Fatalf("EvaluateAndValidate() error = %v", err)
 	}
 
-	if spanID != (trace.SpanID{}) {
-		t.Error("Expected zero span ID for invalid parent")
+	if spanID == (trace.SpanID{}) {
+		t.Error("Expected non-zero span ID (hashed)")
 	}
 	if len(warnings) != 2 {
 		t.Errorf("Expected 2 warnings, got %d", len(warnings))
 	}
 
-	if res.Validation != ValidationInvalid {
-		t.Errorf("Validation = %q, want %q", res.Validation, ValidationInvalid)
+	if res.Validation != ValidationHashed {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationHashed)
 	}
 	if res.ResolvedValue != "notvalid" {
 		t.Errorf("ResolvedValue = %q", res.ResolvedValue)
@@ -434,5 +435,84 @@ func TestParentIDEvaluator_ExprCompileFailure_DefaultsToEmpty(t *testing.T) {
 	}
 	if res.Source != SourceUnconfigured {
 		t.Errorf("Source = %q, want %q", res.Source, SourceUnconfigured)
+	}
+}
+
+// --- ParentID: hash fallback behavior ---
+
+func TestParentIDEvaluator_HashDeterminism(t *testing.T) {
+	// Same non-hex input evaluated twice must produce identical SpanIDs.
+	eval1, err := NewParentIDEvaluator("my-job-id")
+	if err != nil {
+		t.Fatalf("NewParentIDEvaluator() error = %v", err)
+	}
+	eval2, err := NewParentIDEvaluator("my-job-id")
+	if err != nil {
+		t.Fatalf("NewParentIDEvaluator() error = %v", err)
+	}
+
+	id1, _, _, err := eval1.EvaluateAndValidate(nil)
+	if err != nil {
+		t.Fatalf("EvaluateAndValidate() error = %v", err)
+	}
+	id2, _, _, err := eval2.EvaluateAndValidate(nil)
+	if err != nil {
+		t.Fatalf("EvaluateAndValidate() error = %v", err)
+	}
+
+	if id1 != id2 {
+		t.Errorf("hash not deterministic: %v != %v", id1, id2)
+	}
+	if id1 == (trace.SpanID{}) {
+		t.Error("Expected non-zero hashed span ID")
+	}
+}
+
+func TestParentIDEvaluator_HashExpectedValue(t *testing.T) {
+	// Verify the hash of a known input matches sha256("12345")[:8] as hex.
+	evaluator, err := NewParentIDEvaluator("12345")
+	if err != nil {
+		t.Fatalf("NewParentIDEvaluator() error = %v", err)
+	}
+	spanID, _, res, err := evaluator.EvaluateAndValidate(nil)
+	if err != nil {
+		t.Fatalf("EvaluateAndValidate() error = %v", err)
+	}
+
+	// sha256("12345") = 5994471abb01112afcc18159f6cc74b4f511b99806da59b3caf5a9c173cacfc5
+	// first 8 bytes hex = 5994471abb01112a
+	expected, err := trace.SpanIDFromHex("5994471abb01112a")
+	if err != nil {
+		t.Fatalf("SpanIDFromHex() error = %v", err)
+	}
+	if spanID != expected {
+		t.Errorf("spanID = %x, want %x", spanID, expected)
+	}
+	if res.Validation != ValidationHashed {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationHashed)
+	}
+}
+
+func TestParentIDEvaluator_DifferentInputsDifferentHashes(t *testing.T) {
+	eval1, err := NewParentIDEvaluator("job-100")
+	if err != nil {
+		t.Fatalf("NewParentIDEvaluator() error = %v", err)
+	}
+	eval2, err := NewParentIDEvaluator("job-200")
+	if err != nil {
+		t.Fatalf("NewParentIDEvaluator() error = %v", err)
+	}
+
+	id1, _, _, err := eval1.EvaluateAndValidate(nil)
+	if err != nil {
+		t.Fatalf("EvaluateAndValidate() error = %v", err)
+	}
+	id2, _, _, err := eval2.EvaluateAndValidate(nil)
+	if err != nil {
+		t.Fatalf("EvaluateAndValidate() error = %v", err)
+	}
+
+	if id1 == id2 {
+		t.Errorf("different inputs produced same hash: %v", id1)
 	}
 }

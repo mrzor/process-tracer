@@ -7,11 +7,13 @@
 .PHONY: build test-parallel deploy task-a task-b task-c
 
 # Sequential: a chain of short commands.
+# touch exercises multi-arg argv capture (5 elements).
 build:
 	echo "build: phase1"
 	hostname
 	sleep 0.05
 	uname -r
+	touch /tmp/e2e-a /tmp/e2e-b /tmp/e2e-c /tmp/e2e-d
 
 # Parallel: three sibling targets fanned out via `make -j3`.
 # Each sleeps long enough that all three lifetimes reliably overlap.

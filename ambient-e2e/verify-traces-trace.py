@@ -278,6 +278,36 @@ def test_debug_argv_on_every_exec_span(all_spans):
             f"span {s.span_id} ({s.attrs.get('process.command')}) missing debug.argv, got: {argv!r}"
 
 
+def test_argv_make_content(all_spans):
+    """Root make span carries the full 5-element argv from the trace invocation."""
+    first = _first_exec(all_spans)
+    assert first is not None
+    argv = first.attrs.get("debug.argv")
+    assert argv == ["make", "-f", "/tmp/Makefile.pipeline", "test-parallel", "-j3"], \
+        f"root make argv mismatch: {argv!r}"
+
+
+def test_argv_sleep_content(all_spans):
+    """Every sleep span carries argv=['sleep', '0.2']."""
+    sleeps = [s for s in _exec_spans(all_spans) if s.attrs.get("process.command") == "sleep"]
+    assert sleeps, "no sleep spans found"
+    for s in sleeps:
+        argv = s.attrs.get("debug.argv")
+        assert argv == ["sleep", "0.2"], \
+            f"sleep span {s.span_id} argv mismatch: {argv!r}"
+
+
+def test_argv_first_element_matches_command(all_spans):
+    """argv[0] basename should match process.command for every exec span."""
+    import os
+    for s in _exec_spans(all_spans):
+        argv = s.attrs.get("debug.argv")
+        cmd = s.attrs.get("process.command")
+        assert argv and cmd, f"span {s.span_id} missing argv or command"
+        assert os.path.basename(argv[0]) == cmd, \
+            f"span {s.span_id}: argv[0]={argv[0]!r} vs process.command={cmd!r}"
+
+
 def test_debug_environ_contains_build_id(all_spans):
     """debug.environ should include BUILD_ID=make-run-42 on every process.exec span."""
     for s in _exec_spans(all_spans):

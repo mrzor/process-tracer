@@ -326,7 +326,7 @@ class TestPipelineSteps:
     def test_build_step_commands(self, make_sessions):
         _, members = make_sessions[0]
         cmds = {s.attrs.get("process.command") for s in members}
-        for expected in ("make", "hostname", "sleep", "uname"):
+        for expected in ("make", "hostname", "sleep", "uname", "touch"):
             assert expected in cmds, f"build step missing {expected!r}; got {cmds}"
 
     def test_test_parallel_step_has_three_sleeps(self, make_sessions):
@@ -403,6 +403,79 @@ class TestMakeAttributes:
                 f"span {s.span_id} missing debug.environ"
             assert "BUILD_ID=make-run-42" in environ, \
                 f"span {s.span_id} debug.environ missing BUILD_ID entry"
+
+
+class TestArgvContent:
+    """Verify that debug.argv captures the full argument vector, not just
+    the command name. Each assertion checks that known multi-arg invocations
+    carry the right elements in the right order."""
+
+    def test_build_make_argv(self, make_sessions):
+        """First exec of the build step is 'make -f /tmp/Makefile.pipeline build'."""
+        tree, members = make_sessions[0]
+        first = _first_direct_exec(members, tree)
+        assert first is not None
+        argv = first.attrs.get("debug.argv")
+        assert argv == ["make", "-f", "/tmp/Makefile.pipeline", "build"], \
+            f"build step make argv mismatch: {argv!r}"
+
+    def test_test_parallel_make_argv(self, make_sessions):
+        """First exec of the test-parallel step is 'make -f /tmp/Makefile.pipeline test-parallel -j3'."""
+        tree, members = make_sessions[1]
+        first = _first_direct_exec(members, tree)
+        assert first is not None
+        argv = first.attrs.get("debug.argv")
+        assert argv == ["make", "-f", "/tmp/Makefile.pipeline", "test-parallel", "-j3"], \
+            f"test-parallel step make argv mismatch: {argv!r}"
+
+    def test_deploy_make_argv(self, make_sessions):
+        """First exec of the deploy step is 'make -f /tmp/Makefile.pipeline deploy'."""
+        tree, members = make_sessions[2]
+        first = _first_direct_exec(members, tree)
+        assert first is not None
+        argv = first.attrs.get("debug.argv")
+        assert argv == ["make", "-f", "/tmp/Makefile.pipeline", "deploy"], \
+            f"deploy step make argv mismatch: {argv!r}"
+
+    def test_touch_multi_arg(self, make_sessions):
+        """touch in the build step has 5 argv elements (command + 4 file paths)."""
+        _, members = make_sessions[0]
+        touch_spans = [s for s in _exec_spans(members)
+                       if s.attrs.get("process.command") == "touch"]
+        assert touch_spans, "no touch span in build step"
+        argv = touch_spans[0].attrs.get("debug.argv")
+        assert argv == ["touch", "/tmp/e2e-a", "/tmp/e2e-b", "/tmp/e2e-c", "/tmp/e2e-d"], \
+            f"touch argv mismatch: {argv!r}"
+
+    def test_sleep_argv(self, make_sessions):
+        """Every sleep span carries argv=['sleep', '<duration>']."""
+        for _, members in make_sessions:
+            for s in _exec_spans(members):
+                if s.attrs.get("process.command") != "sleep":
+                    continue
+                argv = s.attrs.get("debug.argv")
+                assert isinstance(argv, list) and len(argv) == 2, \
+                    f"sleep argv should be 2 elements, got: {argv!r}"
+                assert argv[0] == "sleep", f"sleep argv[0]={argv[0]!r}"
+                # Duration is either "0.2" (parallel tasks) or "0.05" (build/deploy).
+                assert argv[1] in ("0.2", "0.05"), \
+                    f"sleep argv[1]={argv[1]!r}, expected '0.2' or '0.05'"
+
+    def test_uname_argv(self, make_sessions):
+        """uname spans carry argv=['uname', '-r'] or ['uname', '-m']."""
+        uname_spans = []
+        for _, members in make_sessions:
+            uname_spans.extend(
+                s for s in _exec_spans(members)
+                if s.attrs.get("process.command") == "uname"
+            )
+        assert uname_spans, "no uname spans found"
+        for s in uname_spans:
+            argv = s.attrs.get("debug.argv")
+            assert isinstance(argv, list) and len(argv) == 2, \
+                f"uname argv should be 2 elements, got: {argv!r}"
+            assert argv[0] == "uname", f"uname argv[0]={argv[0]!r}"
+            assert argv[1] in ("-r", "-m"), f"uname argv[1]={argv[1]!r}"
 
 
 class TestMakeRootDebugProvenance:

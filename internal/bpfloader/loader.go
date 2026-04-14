@@ -29,6 +29,7 @@ type Loader struct {
 	tcpV4ConnectExit  link.Link
 	tcpV6ConnectEntry link.Link
 	tcpV6ConnectExit  link.Link
+	forkLink          link.Link
 }
 
 // New creates a new Loader and loads the BPF objects into the kernel.
@@ -79,6 +80,9 @@ func NewWithOptions(opts LoaderOptions) (*Loader, error) {
 func (l *Loader) closeErrorf(errstr string, e error) error {
 	// Close all links that may have been attached (nil-safe)
 	// We intentionally ignore errors during cleanup here since we're already in an error path
+	if l.forkLink != nil {
+		_ = l.forkLink.Close() //nolint:errcheck // Best-effort cleanup in error path
+	}
 	if l.tcpCloseLink != nil {
 		_ = l.tcpCloseLink.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
@@ -126,6 +130,12 @@ func (l *Loader) Attach() error {
 	l.exitLink, err = link.Tracepoint("sched", "sched_process_exit", l.objs.HandleExit, nil)
 	if err != nil {
 		return l.closeErrorf("attaching exit tracepoint", err)
+	}
+
+	// Attach to sched_process_fork tracepoint for fork-without-exec tracking
+	l.forkLink, err = link.Tracepoint("sched", "sched_process_fork", l.objs.HandleFork, nil)
+	if err != nil {
+		return l.closeErrorf("attaching fork tracepoint", err)
 	}
 
 	// Attach kprobes for TCP connect tracking
@@ -200,6 +210,7 @@ func (l *Loader) Close() error {
 		{"TCP v6 connect entry", l.tcpV6ConnectEntry},
 		{"TCP v4 connect exit", l.tcpV4ConnectExit},
 		{"TCP v4 connect entry", l.tcpV4ConnectEntry},
+		{"fork", l.forkLink},
 		{"exit", l.exitLink},
 		{"exec", l.execLink},
 		{"execve enter", l.execveEnterLink},

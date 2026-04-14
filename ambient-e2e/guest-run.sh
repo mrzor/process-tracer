@@ -33,6 +33,7 @@ export BUILD_REGION="us-east-1"
 export CI_JOB_ID="make-job-1"
 make -f /tmp/Makefile.pipeline build
 make -f /tmp/Makefile.pipeline test-parallel -j3
+make -f /tmp/Makefile.pipeline pipe-subshell
 make -f /tmp/Makefile.pipeline deploy
 
 # --- Workload 3: more unmatched noise ---

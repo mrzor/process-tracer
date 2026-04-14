@@ -20,6 +20,7 @@ const (
 	EVENT_EXEC_ENV_CHUNK = 5
 	EVENT_ENV_VAR        = 6
 	EVENT_EXEC_CANDIDATE = 7
+	EVENT_FORK           = 8
 )
 
 // Event matches the C struct from process_tracer.h.

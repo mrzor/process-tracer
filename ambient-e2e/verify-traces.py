@@ -285,12 +285,12 @@ def test_every_non_tree_span_has_a_tree_ancestor(all_spans):
 
 
 class TestPipelineShape:
-    def test_three_pipeline_steps(self, make_trees):
-        assert len(make_trees) == 3, \
-            f"expected 3 process.tree spans (build/test-parallel/deploy), got {len(make_trees)}"
+    def test_four_pipeline_steps(self, make_trees):
+        assert len(make_trees) == 4, \
+            f"expected 4 process.tree spans (build/test-parallel/pipe-subshell/deploy), got {len(make_trees)}"
 
     def test_shared_trace_id(self, make_trees):
-        """All three pipeline steps share the BUILD_ID-derived trace_id."""
+        """All four pipeline steps share the BUILD_ID-derived trace_id."""
         ids = {t.trace_id for t in make_trees}
         assert len(ids) == 1, f"pipeline split across traces: {ids}"
         expected = hashlib.sha256(b"make-run-42").hexdigest()[:32]
@@ -301,7 +301,7 @@ class TestPipelineShape:
         when BUILD_ID (and hence trace_id) is shared. A naive sha256-derived
         SpanID would collide across all three steps."""
         ids = {t.span_id for t in make_trees}
-        assert len(ids) == 3, f"process.tree spans collided on span_id: {ids}"
+        assert len(ids) == 4, f"process.tree spans collided on span_id: {ids}"
 
     def test_shared_parent_id(self, make_trees):
         """All pipeline steps share a hashed parent SpanID from CI_JOB_ID.
@@ -334,7 +334,7 @@ class TestPipelineShape:
 
 
 class TestPipelineSteps:
-    """Per-step assertions, indexed by pipeline order: 0=build, 1=test-parallel, 2=deploy."""
+    """Per-step assertions, indexed by pipeline order: 0=build, 1=test-parallel, 2=pipe-subshell, 3=deploy."""
 
     def test_each_first_exec_is_make(self, make_sessions):
         for idx, (tree, members) in enumerate(make_sessions):
@@ -355,12 +355,22 @@ class TestPipelineSteps:
         assert len(sleeps) >= 3, \
             f"test-parallel: expected >=3 sleep spans, got {len(sleeps)}"
 
+    def test_pipe_subshell_step_commands(self, make_sessions):
+        """The pipe-subshell recipe runs `bash -c 'seq 100 | head -3 | wc -l'`.
+        Without fork tracking, the pipe subshells (fork-without-exec) break the
+        parent chain and seq/head/wc are lost. With fork tracking, all appear."""
+        _, members = make_sessions[2]
+        cmds = {s.attrs.get("process.command") for s in members}
+        for expected in ("seq", "head", "wc"):
+            assert expected in cmds, \
+                f"pipe-subshell step missing {expected!r} (fork tracking broken?); got {cmds}"
+
     def test_deploy_step_has_nested_subshell(self, make_sessions):
         """The deploy recipe runs `bash -c '...; uname -m'`. On Debian, make
         executes recipes via /bin/sh, and the comm captured at exec entry may
         be `sh` (before the sh→bash exec re-exec). Accept either as evidence
         of a sub-shell, and require `uname` as proof the inner commands ran."""
-        _, members = make_sessions[2]
+        _, members = make_sessions[3]
         cmds = {s.attrs.get("process.command") for s in members}
         assert cmds & {"bash", "sh"}, f"deploy step missing sub-shell; got {cmds}"
         assert "uname" in cmds, f"deploy step missing inner uname; got {cmds}"
@@ -466,7 +476,7 @@ class TestArgvContent:
 
     def test_deploy_make_argv(self, make_sessions):
         """First exec of the deploy step is 'make -f /tmp/Makefile.pipeline deploy'."""
-        tree, members = make_sessions[2]
+        tree, members = make_sessions[3]
         first = _first_direct_exec(members, tree)
         assert first is not None
         argv = first.attrs.get("debug.argv")

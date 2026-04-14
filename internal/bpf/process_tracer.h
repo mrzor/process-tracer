@@ -11,6 +11,7 @@ enum event_type {
     EVENT_EXEC_ENV_CHUNK = 5,
     EVENT_ENV_VAR = 6,
     EVENT_EXEC_CANDIDATE = 7,
+    EVENT_FORK = 8,
 };
 
 struct event {

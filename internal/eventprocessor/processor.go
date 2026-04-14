@@ -63,6 +63,8 @@ func (p *Processor) HandleEvent(event *bpf.Event) error {
 		return p.handleExec(event)
 	case bpf.EVENT_EXIT:
 		return p.handleExit(event)
+	case bpf.EVENT_FORK:
+		return nil // BPF-side tracking is sufficient; no Go-side session routing needed
 	case bpf.EVENT_TCP_CONNECT:
 		return p.handleTCPConnect(event)
 	case bpf.EVENT_TCP_CLOSE:

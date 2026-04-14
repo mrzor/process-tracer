@@ -457,6 +457,41 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     return 0;
 }
 
+/* Track fork/clone for processes whose parent is already tracked.
+ * Without this, fork-without-exec subshells (e.g. pipe segments like
+ * `cmd1 | cmd2`) break the parent chain: the subshell PID is never
+ * added to tracked_pids, so its exec'd children are lost. */
+SEC("tp/sched/sched_process_fork")
+int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
+{
+    pid_t parent_pid = ctx->parent_pid;
+    pid_t child_pid = ctx->child_pid;
+
+    /* Only track if parent is already tracked */
+    if (!bpf_map_lookup_elem(&tracked_pids, &parent_pid))
+        return 0;
+
+    /* Add child to tracked set immediately, before Go sees the event —
+     * prevents race where child execs before Go processes EVENT_FORK. */
+    u8 val = 1;
+    bpf_map_update_elem(&tracked_pids, &child_pid, &val, BPF_ANY);
+
+    /* Emit EVENT_FORK so Go-side can add child to parent's session */
+    struct event *e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+    if (!e)
+        return 0;
+
+    e->type = EVENT_FORK;
+    e->pid = child_pid;
+    e->ppid = parent_pid;
+    e->uid = (u32)bpf_get_current_uid_gid();
+    e->timestamp = bpf_ktime_get_ns();
+
+    bpf_ringbuf_submit(e, 0);
+
+    return 0;
+}
+
 SEC("tp/sched/sched_process_exit")
 int handle_exit(struct trace_event_raw_sched_process_template *ctx)
 {

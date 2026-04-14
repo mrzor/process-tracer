@@ -4,7 +4,7 @@
 # pipeline trace. Sequential happens-before is guaranteed by shell semantics
 # (the next `make` only starts after the previous one exits).
 
-.PHONY: build test-parallel deploy task-a task-b task-c
+.PHONY: build test-parallel deploy task-a task-b task-c pipe-subshell
 
 # Sequential: a chain of short commands.
 # touch exercises multi-arg argv capture (5 elements).
@@ -30,6 +30,12 @@ task-b:
 task-c:
 	sleep 0.2
 	echo "task-c done"
+
+# Pipe subshell: fork-without-exec intermediaries.
+# The pipe creates subshells that never exec; seq/head/wc exec inside them.
+# Without fork tracking, only bash is visible; with it, all three appear.
+pipe-subshell:
+	bash -c 'seq 100 | head -3 | wc -l'
 
 # Sequential with one nested sub-shell, exercising deeper trees.
 deploy:

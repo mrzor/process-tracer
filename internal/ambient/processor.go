@@ -55,6 +55,8 @@ func (p *Processor) HandleEvent(event *bpf.Event) error {
 		return p.handleExecCandidate(event)
 	case bpf.EVENT_EXEC:
 		return p.handleExec(event)
+	case bpf.EVENT_FORK:
+		return p.handleFork(event)
 	case bpf.EVENT_EXIT:
 		return p.handleExit(event)
 	case bpf.EVENT_TCP_CONNECT:
@@ -188,6 +190,18 @@ func (p *Processor) handleExecCandidate(event *bpf.Event) error {
 		return p.processExit(session, exitInfo.pid, exitInfo.ppid, exitInfo.uid, exitInfo.exitCode, exitInfo.timestamp, exitInfo.comm)
 	}
 
+	return nil
+}
+
+// handleFork handles EVENT_FORK for fork/clone of tracked processes.
+// No span is emitted — this purely maintains PID-to-session routing so that
+// when the forked child later execs, handleExec finds it in the correct session.
+// BPF already added the child to tracked_pids before emitting this event.
+func (p *Processor) handleFork(event *bpf.Event) error {
+	childPid := event.Pid
+	parentPid := event.Ppid
+
+	p.manager.AddDescendant(childPid, parentPid)
 	return nil
 }
 

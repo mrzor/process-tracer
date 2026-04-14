@@ -78,6 +78,7 @@ type processTracerSpecs struct {
 type processTracerProgramSpecs struct {
 	HandleExec             *ebpf.ProgramSpec `ebpf:"handle_exec"`
 	HandleExit             *ebpf.ProgramSpec `ebpf:"handle_exit"`
+	HandleFork             *ebpf.ProgramSpec `ebpf:"handle_fork"`
 	HandleInetSockSetState *ebpf.ProgramSpec `ebpf:"handle_inet_sock_set_state"`
 	TcpV4ConnectEntry      *ebpf.ProgramSpec `ebpf:"tcp_v4_connect_entry"`
 	TcpV4ConnectExit       *ebpf.ProgramSpec `ebpf:"tcp_v4_connect_exit"`
@@ -163,6 +164,7 @@ type processTracerVariables struct {
 type processTracerPrograms struct {
 	HandleExec             *ebpf.Program `ebpf:"handle_exec"`
 	HandleExit             *ebpf.Program `ebpf:"handle_exit"`
+	HandleFork             *ebpf.Program `ebpf:"handle_fork"`
 	HandleInetSockSetState *ebpf.Program `ebpf:"handle_inet_sock_set_state"`
 	TcpV4ConnectEntry      *ebpf.Program `ebpf:"tcp_v4_connect_entry"`
 	TcpV4ConnectExit       *ebpf.Program `ebpf:"tcp_v4_connect_exit"`
@@ -175,6 +177,7 @@ func (p *processTracerPrograms) Close() error {
 	return _ProcessTracerClose(
 		p.HandleExec,
 		p.HandleExit,
+		p.HandleFork,
 		p.HandleInetSockSetState,
 		p.TcpV4ConnectEntry,
 		p.TcpV4ConnectExit,

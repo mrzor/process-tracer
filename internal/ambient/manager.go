@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -114,6 +117,12 @@ func (m *SessionManager) CreateSession(pid uint32, rule *config.AmbientRule, met
 		log.Printf("warning: failed to track PID %d in BPF: %v", pid, err)
 	}
 
+	// Catch-up scan: between BPF emitting EXEC_CANDIDATE and the TrackPID call
+	// above, the process may have already forked children that the BPF fork
+	// handler missed (parent wasn't in tracked_pids yet). Scan procfs to
+	// retroactively add any such children.
+	m.catchUpChildren(pid, session)
+
 	log.Printf("session %s: started tracing PID %d (rule %q)", sessionID, pid, rule.Name)
 	return session, nil
 }
@@ -197,6 +206,47 @@ func (m *SessionManager) CleanupStale() {
 			// Close the synthetic "process.tree" root span for the timed-out session.
 			session.EndSession(now)
 			delete(m.sessions, id)
+		}
+	}
+}
+
+// catchUpChildren reads /proc/<pid>/task/<pid>/children and adds any existing
+// children to the session and BPF tracked_pids map. This closes the race window
+// between EXEC_CANDIDATE emission and TrackPID completion: children forked in
+// that window won't have been caught by the BPF fork handler.
+// Must be called with m.mu held.
+func (m *SessionManager) catchUpChildren(pid uint32, session *TraceSession) {
+	path := fmt.Sprintf("/proc/%d/task/%d/children", pid, pid)
+	data, err := os.ReadFile(path) //nolint:gosec // path is constructed from a validated PID, not user input
+	if err != nil {
+		// Process may have already exited, or kernel doesn't expose children file
+		return
+	}
+
+	fields := strings.Fields(string(data))
+	for _, field := range fields {
+		childPID, err := strconv.ParseUint(field, 10, 32)
+		if err != nil {
+			continue
+		}
+		cpid := uint32(childPID)
+
+		// Skip if already tracked
+		if _, ok := m.pidToSession[cpid]; ok {
+			continue
+		}
+
+		// Enforce limits
+		if session.PIDs() >= m.limits.MaxPIDsPerSession || m.totalPIDs >= m.limits.MaxTotalPIDs {
+			break
+		}
+
+		session.AddPID(cpid)
+		m.pidToSession[cpid] = session
+		m.totalPIDs++
+
+		if err := m.loader.TrackPID(int(cpid)); err != nil {
+			log.Printf("session %s: catch-up TrackPID(%d) failed: %v", session.ID, cpid, err)
 		}
 	}
 }

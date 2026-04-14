@@ -143,11 +143,11 @@ def _descendants_of(spans: list[Span], root: Span) -> list[Span]:
 
 
 def _first_direct_exec(members: list[Span], tree: Span) -> Span | None:
-    """First process.exec that's a direct child of `tree`."""
-    children = [
-        s for s in _exec_spans(members)
-        if s.parent_span_id == tree.span_id
-    ]
+    """Earliest process.exec that's a direct child of `tree` (by start time)."""
+    children = sorted(
+        (s for s in _exec_spans(members) if s.parent_span_id == tree.span_id),
+        key=lambda s: s.start_unix_nano,
+    )
     return children[0] if children else None
 
 
@@ -184,8 +184,8 @@ def perl_spans(all_spans):
 
 
 def test_span_names(all_spans):
-    """Every span is either a process.tree session root or a process.exec."""
-    allowed = {"process.tree", "process.exec"}
+    """Every span is a process.tree, process.exec, or tcp.connect."""
+    allowed = {"process.tree", "process.exec", "tcp.connect"}
     bad = [s.name for s in all_spans if s.name not in allowed]
     assert not bad, f"unexpected span names: {bad}"
 
@@ -228,8 +228,9 @@ def test_resource_service_name(resource_spans):
 
 
 def test_unmatched_processes_not_traced(all_spans):
-    """find, dd, ls, cat, wc ran in the VM but should not produce spans."""
-    unmatched = ("find", "dd", "ls", "cat", "wc")
+    """find, dd, ls, cat ran in the VM but should not produce spans.
+    (wc is excluded: it appears in the pipe-subshell make target.)"""
+    unmatched = ("find", "dd", "ls", "cat")
     leaked = [
         cmd for cmd in unmatched
         if any(s.attrs.get("process.command") == cmd for s in all_spans)
@@ -364,6 +365,20 @@ class TestPipelineSteps:
         for expected in ("seq", "head", "wc"):
             assert expected in cmds, \
                 f"pipe-subshell step missing {expected!r} (fork tracking broken?); got {cmds}"
+
+    def test_deploy_step_has_tcp_span(self, make_sessions):
+        """The deploy recipe runs `socat TCP4:127.0.0.1:7777 /dev/null`.
+        This must produce a tcp.connect span that inherits the rule's
+        custom attributes (service.name)."""
+        _, members = make_sessions[3]
+        tcp_spans = [s for s in members if s.name == "tcp.connect"]
+        assert len(tcp_spans) >= 1, \
+            f"deploy step missing tcp.connect span; got names: {[s.name for s in members]}"
+        tcp = tcp_spans[0]
+        assert tcp.attrs.get("service.name") == "ambient-e2e-make", \
+            f"tcp.connect span service.name={tcp.attrs.get('service.name')!r}, expected 'ambient-e2e-make'"
+        assert tcp.attrs.get("net.peer.port") == 7777, \
+            f"tcp.connect span net.peer.port={tcp.attrs.get('net.peer.port')!r}, expected 7777"
 
     def test_deploy_step_has_nested_subshell(self, make_sessions):
         """The deploy recipe runs `bash -c '...; uname -m'`. On Debian, make

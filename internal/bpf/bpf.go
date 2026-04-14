@@ -45,7 +45,7 @@ type EventData struct {
 
 // ProcessData extracts process event fields.
 func (e *Event) ProcessData() *ProcessEventData {
-	if e.Type != EVENT_EXEC && e.Type != EVENT_EXIT && e.Type != EVENT_EXEC_CANDIDATE {
+	if e.Type != EVENT_EXEC && e.Type != EVENT_EXIT && e.Type != EVENT_EXEC_CANDIDATE && e.Type != EVENT_FORK {
 		return nil
 	}
 	//nolint:gosec // Unsafe required for eBPF C struct interop
@@ -63,10 +63,11 @@ func (e *Event) TCPData() *TCPEventData {
 
 // ProcessEventData matches the proc struct in the C union.
 type ProcessEventData struct {
-	ExitCode uint32
-	Comm     [16]byte
+	ExitCode        uint32
+	Comm            [16]byte
 	IsContainerInit uint32 // 1 if PID 1 in a non-root PID namespace
 	NsLevel         uint32 // PID namespace nesting level (0 = root)
+	TrackedAncestor uint32 // PID found via ancestor walk (0 if immediate parent was tracked)
 }
 
 // TCPEventData matches the tcp struct in the C union.

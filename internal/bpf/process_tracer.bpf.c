@@ -417,16 +417,55 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
             return 0;
 
         e->type = EVENT_EXEC;
-    } else if (ambient_mode) {
-        /* Ambient mode: parent not tracked - emit EXEC_CANDIDATE for Go-side filtering.
-         * Do NOT add to tracked_pids yet; Go decides after filter evaluation. */
-        e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-        if (!e)
-            return 0;
-
-        e->type = EVENT_EXEC_CANDIDATE;
+        e->data.proc.tracked_ancestor = 0;
     } else {
-        return 0;
+        /* Parent not directly tracked. Walk up the ancestor chain (up to 8
+         * levels) looking for a tracked ancestor. This closes the race where
+         * the session root was added to tracked_pids but intermediate
+         * fork-without-exec children were not yet tracked. */
+        pid_t ancestor_pid = 0;
+        struct task_struct *walk = bpf_core_cast(task, struct task_struct)->real_parent;
+
+        #pragma unroll
+        for (int i = 0; i < 8; i++) {
+            struct task_struct *grandparent = bpf_core_cast(walk, struct task_struct)->real_parent;
+            pid_t gp_pid = bpf_core_cast(grandparent, struct task_struct)->tgid;
+
+            if (gp_pid <= 1)  /* reached init — stop */
+                break;
+
+            if (bpf_map_lookup_elem(&tracked_pids, &gp_pid)) {
+                ancestor_pid = gp_pid;
+                break;
+            }
+            walk = grandparent;
+        }
+
+        if (ancestor_pid) {
+            /* Found a tracked ancestor — this process is a descendant.
+             * Add all intermediate PIDs to tracked_pids so future forks
+             * from them are tracked immediately without another walk. */
+            bpf_map_update_elem(&tracked_pids, &pid, &val, BPF_ANY);
+            bpf_map_update_elem(&tracked_pids, &ppid, &val, BPF_ANY);
+
+            e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+            if (!e)
+                return 0;
+
+            e->type = EVENT_EXEC;
+            e->data.proc.tracked_ancestor = ancestor_pid;
+        } else if (ambient_mode) {
+            /* No tracked ancestor found - emit EXEC_CANDIDATE for Go-side filtering.
+             * Do NOT add to tracked_pids yet; Go decides after filter evaluation. */
+            e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
+            if (!e)
+                return 0;
+
+            e->type = EVENT_EXEC_CANDIDATE;
+            e->data.proc.tracked_ancestor = 0;
+        } else {
+            return 0;
+        }
     }
     e->pid = pid;
     e->uid = (u32)uid_gid;
@@ -460,16 +499,47 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 /* Track fork/clone for processes whose parent is already tracked.
  * Without this, fork-without-exec subshells (e.g. pipe segments like
  * `cmd1 | cmd2`) break the parent chain: the subshell PID is never
- * added to tracked_pids, so its exec'd children are lost. */
+ * added to tracked_pids, so its exec'd children are lost.
+ *
+ * Uses an ancestor walk (up to 8 levels) to close the race where the
+ * session root is in tracked_pids but intermediate forks are not yet. */
 SEC("tp/sched/sched_process_fork")
 int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
 {
     pid_t parent_pid = ctx->parent_pid;
     pid_t child_pid = ctx->child_pid;
+    pid_t ancestor_pid = 0;
 
-    /* Only track if parent is already tracked */
-    if (!bpf_map_lookup_elem(&tracked_pids, &parent_pid))
-        return 0;
+    if (bpf_map_lookup_elem(&tracked_pids, &parent_pid)) {
+        ancestor_pid = parent_pid;
+    } else {
+        /* Walk up the ancestor chain from the parent (fork runs in parent
+         * context, so bpf_get_current_task_btf() is the forking process). */
+        struct task_struct *walk = (struct task_struct *)bpf_get_current_task_btf();
+
+        #pragma unroll
+        for (int i = 0; i < 8; i++) {
+            struct task_struct *grandparent = bpf_core_cast(walk, struct task_struct)->real_parent;
+            pid_t gp_pid = bpf_core_cast(grandparent, struct task_struct)->tgid;
+
+            if (gp_pid <= 1)
+                break;
+
+            if (bpf_map_lookup_elem(&tracked_pids, &gp_pid)) {
+                ancestor_pid = gp_pid;
+                break;
+            }
+            walk = grandparent;
+        }
+
+        if (!ancestor_pid)
+            return 0;
+
+        /* Back-fill the parent into tracked_pids so its future forks
+         * are caught immediately without another ancestor walk. */
+        u8 v = 1;
+        bpf_map_update_elem(&tracked_pids, &parent_pid, &v, BPF_ANY);
+    }
 
     /* Add child to tracked set immediately, before Go sees the event —
      * prevents race where child execs before Go processes EVENT_FORK. */
@@ -486,6 +556,7 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
     e->ppid = parent_pid;
     e->uid = (u32)bpf_get_current_uid_gid();
     e->timestamp = bpf_ktime_get_ns();
+    e->data.proc.tracked_ancestor = (ancestor_pid != parent_pid) ? ancestor_pid : 0;
 
     bpf_ringbuf_submit(e, 0);
 

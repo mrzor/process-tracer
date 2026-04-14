@@ -29,6 +29,8 @@ struct event {
             char comm[TASK_COMM_LEN];
             __u32 is_container_init;   // 1 if PID 1 in a non-root PID namespace
             __u32 ns_level;            // PID namespace nesting level (0 = root)
+            __u32 tracked_ancestor;    // PID of the ancestor found in tracked_pids
+                                       // via ancestor walk (0 if immediate parent was tracked)
         } proc;
 
         // TCP event fields

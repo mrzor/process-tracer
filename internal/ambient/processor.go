@@ -201,7 +201,17 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 	childPid := event.Pid
 	parentPid := event.Ppid
 
-	p.manager.AddDescendant(childPid, parentPid)
+	session := p.manager.AddDescendant(childPid, parentPid)
+	if session == nil {
+		// Parent not in any session — try the tracked ancestor from BPF's
+		// ancestor walk (covers fork-without-exec intermediaries).
+		if procData := event.ProcessData(); procData != nil && procData.TrackedAncestor != 0 {
+			// First add the parent (fork-only intermediate) to the session
+			p.manager.AddDescendant(parentPid, procData.TrackedAncestor)
+			// Then add the child
+			p.manager.AddDescendant(childPid, parentPid)
+		}
+	}
 	return nil
 }
 
@@ -213,7 +223,17 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 	// Add descendant to parent's session
 	session := p.manager.AddDescendant(pid, ppid)
 	if session == nil {
-		return nil
+		// Parent not in any session — try the tracked ancestor from BPF's
+		// ancestor walk (covers fork-without-exec intermediaries).
+		if procData := event.ProcessData(); procData != nil && procData.TrackedAncestor != 0 {
+			// First add the immediate parent (fork-only intermediate) to the session
+			p.manager.AddDescendant(ppid, procData.TrackedAncestor)
+			// Then add this process
+			session = p.manager.AddDescendant(pid, ppid)
+		}
+		if session == nil {
+			return nil
+		}
 	}
 
 	// Get metadata if available

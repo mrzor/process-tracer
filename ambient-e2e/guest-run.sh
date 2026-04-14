@@ -16,6 +16,13 @@ DAEMON_PID=$!
 # Give eBPF probes time to attach
 sleep 2
 
+# Start an untraced socat TCP listener for the TCP e2e test.
+# Serves 10 zero-bytes per connection, then closes. fork keeps it alive
+# across multiple connections (only one expected).
+socat TCP4-LISTEN:7777,reuseaddr,fork SYSTEM:'head -c 10 /dev/zero' &
+SOCAT_PID=$!
+sleep 0.1
+
 # --- Workload 1: unmatched noise (should NOT produce spans) ---
 echo "[guest] Running unmatched processes..."
 find /tmp -maxdepth 1 -type f > /dev/null 2>&1 || true
@@ -46,6 +53,10 @@ echo "[guest] Running perl (matched)..."
 export JOB_ID="perl-job-99"
 export JOB_TIER="critical"
 perl -e 'system("echo perl-child"); system("sleep 0.1"); system("uname -m")'
+
+echo "[guest] Stopping socat listener (PID $SOCAT_PID)..."
+kill "$SOCAT_PID" 2>/dev/null || true
+wait "$SOCAT_PID" 2>/dev/null || true
 
 echo "[guest] Stopping daemon (PID $DAEMON_PID)..."
 kill -TERM "$DAEMON_PID" 2>/dev/null || true

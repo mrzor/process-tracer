@@ -26,7 +26,8 @@ import (
 type processSpanInfo struct {
 	Span      trace.Span
 	SpanCtx   trace.SpanContext
-	StartTime uint64 // monotonic timestamp
+	ParentCtx trace.SpanContext // parent's context, preserved for exec-replacement
+	StartTime uint64           // monotonic timestamp
 }
 
 // tcpSpanInfo holds span information for a TCP connection.
@@ -235,6 +236,15 @@ func (f *OTELFormatter) resolveRootIDs(metadata *procmeta.ProcessMetadata) (
 
 // HandleProcessExec creates a new process span.
 func (f *OTELFormatter) HandleProcessExec(pid, ppid, _ uint32, timestamp uint64, _ *procmeta.ProcessMetadata) error {
+	// Handle exec-replacement: if this PID already has a span (e.g. sh exec'd
+	// into bash, same PID), keep the existing span. HandleProcessExit will
+	// finalize it with the correct final command name and attributes. Children
+	// that were forked from the intermediate shell already reference this span
+	// as their parent, so keeping it avoids orphans.
+	if _, ok := f.spans[pid]; ok {
+		return nil
+	}
+
 	// Parent selection: prefer tracked ppid's span, fall back to the session root.
 	// We never allow ctx to remain empty — that would start a new trace for orphans.
 	var parentSpanCtx trace.SpanContext
@@ -252,16 +262,22 @@ func (f *OTELFormatter) HandleProcessExec(pid, ppid, _ uint32, timestamp uint64,
 	// Convert monotonic timestamp to wall clock for span start time
 	startTime := f.converter.MonotonicToWallClock(timestamp)
 
-	// Start span with explicit start time
+	// Start span with explicit start time. Set process.pid immediately so
+	// exec-replaced spans (ended early, before HandleProcessExit) still carry it.
 	_, span := f.tracer.Start(ctx, "process.exec",
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(startTime),
+		trace.WithAttributes(
+			attribute.Int("process.pid", int(pid)),
+			attribute.Int("process.parent_pid", int(ppid)),
+		),
 	)
 
 	// Store span info for this PID
 	f.spans[pid] = &processSpanInfo{
 		Span:      span,
 		SpanCtx:   span.SpanContext(),
+		ParentCtx: parentSpanCtx,
 		StartTime: timestamp,
 	}
 
@@ -467,6 +483,13 @@ func (f *OTELFormatter) HandleTCPClose(pid uint32, skaddr uint64, saddr, daddr [
 	}
 	if srcHosts := f.resolver.Lookup(srcIP); len(srcHosts) > 0 {
 		attrs = append(attrs, attribute.String("network.pseudo_reverse_dns.src_host", strings.Join(srcHosts, ",")))
+	}
+
+	// Evaluate custom attributes (e.g. service.name) from the owning process's metadata.
+	if metadata := f.metadataManager.Get(pid); metadata != nil {
+		if customAttrs, err := f.attrEvaluator.EvaluateCustomAttributes(metadata); err == nil && len(customAttrs) > 0 {
+			attrs = append(attrs, customAttrs...)
+		}
 	}
 
 	spanInfo.Span.SetAttributes(attrs...)

@@ -38,7 +38,11 @@ pipe-subshell:
 	bash -c 'seq 100 | head -3 | wc -l'
 
 # Sequential with one nested sub-shell, exercising deeper trees.
+# socat exercises TCP connect tracking: connects to the listener started in
+# guest-run.sh, reads 10 zero-bytes, and closes. This produces a tcp.connect
+# span that must inherit custom attributes (e.g. service.name).
 deploy:
 	echo "deploy: prepare"
+	socat TCP4:127.0.0.1:7777 /dev/null
 	bash -c 'echo "deploy: nested"; sleep 0.05; uname -m'
 	echo "deploy: done"

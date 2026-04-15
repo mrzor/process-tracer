@@ -30,7 +30,7 @@ First run downloads ~415 MB of dependencies (Debian cloud image + otelcol-contri
 2. **Host** stages files into `staging/` and starts an HTTP server + OTLP collector.
 3. **Host** boots a QEMU VM with a cloud-init ISO and copy-on-write overlay.
 4. **VM** (via cloud-init) installs `make`, downloads test files from the host HTTP server.
-5. **VM** runs the daemon (sends OTLP traces to host collector at `10.0.2.2:4318`).
+5. **VM** runs the daemon (sends OTLP traces to host collector at `10.0.2.2:14318`).
 6. **VM** runs `make -f Makefile.test` — a workload that spawns nested child processes.
 7. **VM** waits for traces to flush, stops the daemon, and powers off.
 8. **Host** stops the collector and runs `verify-traces.sh` to assert that expected spans exist.
@@ -57,6 +57,6 @@ On failure, `staging/serial.log` contains the VM's console output (cloud-init pr
 |---------|-------|-----|
 | `qemu-system-x86_64: not found` | QEMU not installed | `sudo pacman -S qemu-full` / `apt install qemu-system-x86` |
 | VM boot very slow (>5 min) | No KVM | Ensure `/dev/kvm` exists and is writable |
-| Collector not ready | Port conflict | Check nothing else uses port 4318 |
+| Collector not ready | Port conflict | Test uses port 14318; `run-test.sh` kills any stale `otelcol-contrib` and aborts with a diagnostic if something else holds the port |
 | No spans in traces.jsonl | Daemon didn't attach probes | Check serial.log for BPF errors |
 | `verify-traces.sh` fails on service.name | Rule didn't match | Check `ambient-test.yaml` command field matches kernel comm |

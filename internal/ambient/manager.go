@@ -38,6 +38,13 @@ type SessionManager struct {
 	sessions     map[string]*TraceSession
 	totalPIDs    int
 	nextID       int
+
+	// Pending context-starved sessions: matched at EXEC_CANDIDATE but
+	// waiting for a descendant whose metadata actually resolves the rule's
+	// Expr expressions. Keyed by the injector's (root) PID. The byPid map
+	// lets a buffered descendant's own fork/exec find the pending root.
+	pendingStarved      map[uint32]*pendingStarvedSession
+	pendingStarvedByPid map[uint32]uint32
 }
 
 // NewSessionManager creates a new session manager.
@@ -50,14 +57,16 @@ func NewSessionManager(
 	limits config.AmbientLimits,
 ) *SessionManager {
 	return &SessionManager{
-		loader:          loader,
-		tracer:          tracer,
-		converter:       converter,
-		resolver:        resolver,
-		metadataManager: metadataManager,
-		limits:          limits,
-		pidToSession:    make(map[uint32]*TraceSession),
-		sessions:        make(map[string]*TraceSession),
+		loader:              loader,
+		tracer:              tracer,
+		converter:           converter,
+		resolver:            resolver,
+		metadataManager:     metadataManager,
+		limits:              limits,
+		pidToSession:        make(map[uint32]*TraceSession),
+		sessions:            make(map[string]*TraceSession),
+		pendingStarved:      make(map[uint32]*pendingStarvedSession),
+		pendingStarvedByPid: make(map[uint32]uint32),
 	}
 }
 
@@ -65,7 +74,12 @@ func NewSessionManager(
 func (m *SessionManager) CreateSession(pid uint32, rule *config.AmbientRule, metadata *procmeta.ProcessMetadata) (*TraceSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.createSessionLocked(pid, rule, metadata)
+}
 
+// createSessionLocked is the lock-free body of CreateSession. It's also used
+// by the context-starved materialization path, which already holds m.mu.
+func (m *SessionManager) createSessionLocked(pid uint32, rule *config.AmbientRule, metadata *procmeta.ProcessMetadata) (*TraceSession, error) {
 	// Enforce limits
 	if len(m.sessions) >= m.limits.MaxConcurrentSessions {
 		return nil, fmt.Errorf("max concurrent sessions (%d) reached", m.limits.MaxConcurrentSessions)
@@ -112,7 +126,9 @@ func (m *SessionManager) CreateSession(pid uint32, rule *config.AmbientRule, met
 	// process.exec spans observed within this session will hang under it.
 	session.StartSession(context.Background(), metadata, time.Now())
 
-	// Track the PID in BPF so descendants are auto-tracked
+	// Track the PID in BPF so descendants are auto-tracked. The
+	// context-starved path already called TrackPID at pending-creation time;
+	// calling it again here is a safe no-op for already-tracked PIDs.
 	if err := m.loader.TrackPID(int(pid)); err != nil {
 		log.Printf("warning: failed to track PID %d in BPF: %v", pid, err)
 	}
@@ -143,6 +159,14 @@ func (m *SessionManager) AddDescendant(pid, ppid uint32) *TraceSession {
 	if !ok {
 		return nil
 	}
+	return m.addDescendantLocked(session, pid, ppid)
+}
+
+// addDescendantLocked associates pid with an existing session. Must be called
+// with m.mu held. Returns the session on success, or nil if limits were
+// exhausted (caller should treat as a dropped descendant).
+func (m *SessionManager) addDescendantLocked(session *TraceSession, pid, ppid uint32) *TraceSession {
+	_ = ppid // ppid kept in signature for symmetry with AddDescendant
 
 	// Enforce per-session PID limit
 	if session.PIDs() >= m.limits.MaxPIDsPerSession {
@@ -191,6 +215,7 @@ func (m *SessionManager) CleanupStale() {
 	defer m.mu.Unlock()
 
 	now := time.Now()
+	m.cleanupStalePendingStarvedLocked(now)
 	for id, session := range m.sessions {
 		if now.Sub(session.CreatedAt) > m.limits.SessionTimeout {
 			log.Printf("session %s: timed out after %v, cleaning up", id, m.limits.SessionTimeout)
@@ -261,4 +286,30 @@ func (m *SessionManager) ActiveSessions() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.sessions)
+}
+
+// CloseAllSessions ends every active session's synthetic process.tree span
+// and drops pending-starved sessions. Intended for daemon shutdown: without
+// this, the OTEL BatchSpanProcessor's Shutdown only drains already-ended
+// spans, and any still-active root span would be silently dropped.
+func (m *SessionManager) CloseAllSessions() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	now := time.Now()
+	closed := 0
+	for id, session := range m.sessions {
+		session.EndSession(now)
+		delete(m.sessions, id)
+		closed++
+	}
+	// Also drop any pending-starved sessions (no span to end — just
+	// release BPF tracking and state).
+	for _, pending := range m.pendingStarved {
+		m.dropPendingStarvedLocked(pending)
+	}
+	// Forget PID routing — we're going away.
+	m.pidToSession = map[uint32]*TraceSession{}
+	m.totalPIDs = 0
+	return closed
 }

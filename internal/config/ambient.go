@@ -24,6 +24,20 @@ type AmbientRule struct {
 	TraceID            string            `yaml:"trace_id"`
 	ParentID           string            `yaml:"parent_id"`
 	AddDebugAttributes bool              `yaml:"add_debug_attributes"`
+
+	// ContextStarved marks this rule's root process as unable to carry useful
+	// context on its own (e.g. `runc exec`: the injector's execve envp lacks
+	// the CI_* variables we want for trace_id/attrs — those live on some
+	// descendant's exec event, potentially several levels below).
+	//
+	// When true, a match does NOT start an OTEL session immediately. Instead,
+	// a pending session is held; every descendant exec (at any depth) is
+	// tried against the rule's Expr expressions (trace_id / parent_id /
+	// attributes), and the session materializes at the first descendant
+	// whose metadata makes any expression resolve to a non-empty value.
+	// If no descendant resolves before session_timeout, the pending session
+	// is dropped.
+	ContextStarved bool `yaml:"context_starved"`
 }
 
 // AmbientMatch defines the criteria for matching a process.
@@ -91,6 +105,9 @@ func (c *AmbientConfig) validate() error {
 		}
 		if r.Match.Command == "" && !r.Match.IsContainerInit {
 			return fmt.Errorf("rule %q: at least one of match.command or match.is_container_init is required", r.Name)
+		}
+		if r.ContextStarved && r.TraceID == "" && r.ParentID == "" && len(r.Attributes) == 0 {
+			return fmt.Errorf("rule %q: context_starved requires at least one of trace_id, parent_id, or attributes to define what 'context-ful' means for materialization", r.Name)
 		}
 	}
 	if c.Limits.MaxTotalPIDs > 10240 {

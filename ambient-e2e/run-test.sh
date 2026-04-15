@@ -9,6 +9,7 @@ STAGING="$SCRIPT_DIR/staging"
 CACHE="$SCRIPT_DIR/.cache"
 TIMEOUT=300
 HTTP_PORT=9999
+OTLP_PORT=14318  # non-default so we don't collide with otel-tui / other user tools on 4318
 REBUILD_BASE=false
 MODE=daemon
 
@@ -19,7 +20,9 @@ for arg in "$@"; do
         --rebuild-base|--force-rebuild) REBUILD_BASE=true ;;
         --mode=daemon) MODE=daemon ;;
         --mode=trace) MODE=trace ;;
-        --mode=*) echo "Unknown mode: ${arg#--mode=} (must be daemon or trace)"; exit 1 ;;
+        --mode=runc) MODE=runc ;;
+        --mode=runc-starved) MODE=runc-starved ;;
+        --mode=*) echo "Unknown mode: ${arg#--mode=} (must be daemon, trace, runc, or runc-starved)"; exit 1 ;;
         *) echo "Unknown flag: $arg"; exit 1 ;;
     esac
 done
@@ -166,6 +169,12 @@ ok "host/build" "Done"
 cp "$SCRIPT_DIR/Makefile.pipeline" "$STAGING/"
 if [[ "$MODE" == "trace" ]]; then
     cp "$SCRIPT_DIR/guest-run-trace.sh" "$STAGING/guest-run.sh"
+elif [[ "$MODE" == "runc" ]]; then
+    cp "$SCRIPT_DIR/guest-run-runc.sh" "$STAGING/guest-run.sh"
+    cp "$SCRIPT_DIR/ambient-runc.yaml" "$STAGING/"
+elif [[ "$MODE" == "runc-starved" ]]; then
+    cp "$SCRIPT_DIR/guest-run-runc-starved.sh" "$STAGING/guest-run.sh"
+    cp "$SCRIPT_DIR/ambient-runc-starved.yaml" "$STAGING/"
 else
     cp "$SCRIPT_DIR/guest-run.sh" "$STAGING/"
     cp "$SCRIPT_DIR/ambient-test.yaml" "$STAGING/"
@@ -179,19 +188,41 @@ HTTP_PID=$!
 
 # --- Start OTLP collector on host ---
 
-log "host/otel" "Starting otelcol-contrib..."
-"$CACHE/otelcol-contrib" --config "$SCRIPT_DIR/otelcol.yaml" &>/dev/null &
+# Reap any leftover test collector from an earlier aborted run so the port
+# doesn't stay bound. `pkill -f otelcol-contrib` matches our binary path
+# specifically — it won't touch other OTEL tools (otel-tui etc.).
+if pkill -f "$CACHE/otelcol-contrib" 2>/dev/null; then
+    warn "host/otel" "Killed stale otelcol-contrib from previous run"
+    # Give the kernel a moment to release the port
+    for _ in $(seq 1 10); do
+        sleep 0.2
+        ss -tln 2>/dev/null | grep -q ":${OTLP_PORT}\b" || break
+    done
+fi
+
+# Fail fast (with a useful diagnostic) if something else is holding our port.
+if ss -tlnp 2>/dev/null | grep -q ":${OTLP_PORT}\b"; then
+    err "host/otel" "Port ${OTLP_PORT} is already in use by:"
+    ss -tlnp 2>/dev/null | grep ":${OTLP_PORT}\b" | sed "s/^/  /"
+    echo "The e2e harness uses ${OTLP_PORT} (non-default) to avoid colliding with"
+    echo "tools on 4318. Free it (or adjust OTLP_PORT at the top of run-test.sh)"
+    echo "and retry."
+    exit 1
+fi
+
+log "host/otel" "Starting otelcol-contrib on :${OTLP_PORT}..."
+"$CACHE/otelcol-contrib" --config "$SCRIPT_DIR/otelcol.yaml" >"$STAGING/otelcol.log" 2>&1 &
 OTELCOL_PID=$!
 
 # Wait for collector to be ready
 for i in $(seq 1 15); do
-    HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' http://localhost:4318/ 2>/dev/null || true)
+    HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' "http://localhost:${OTLP_PORT}/" 2>/dev/null || true)
     if [[ "$HTTP_CODE" =~ ^(200|404|405)$ ]]; then
         ok "host/otel" "Collector ready (${i}s)"
         break
     fi
     if (( i == 15 )); then
-        err "host/otel" "Collector not ready after 15s"
+        err "host/otel" "Collector not ready after 15s — see $STAGING/otelcol.log"
         exit 1
     fi
     sleep 1
@@ -276,6 +307,10 @@ unset HTTP_PID
 echo ""
 if [[ "$MODE" == "trace" ]]; then
     uv run --script "$SCRIPT_DIR/verify-traces-trace.py" "$STAGING/traces.jsonl"
+elif [[ "$MODE" == "runc" ]]; then
+    uv run --script "$SCRIPT_DIR/verify-traces-runc.py" "$STAGING/traces.jsonl"
+elif [[ "$MODE" == "runc-starved" ]]; then
+    uv run --script "$SCRIPT_DIR/verify-traces-runc-starved.py" "$STAGING/traces.jsonl"
 else
     uv run --script "$SCRIPT_DIR/verify-traces.py" "$STAGING/traces.jsonl"
 fi

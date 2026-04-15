@@ -24,7 +24,7 @@ rules:
       job.tier: 'expr:env["JOB_TIER"]'
 
 otel:
-  endpoint: "http://10.0.2.2:4318"
+  endpoint: "http://10.0.2.2:14318"
   service_name: "ambient-e2e-daemon"
 
 limits:

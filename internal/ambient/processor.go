@@ -168,6 +168,17 @@ func (p *Processor) handleExecCandidate(event *bpf.Event) error {
 		}
 	}
 
+	// Context-starved rules don't materialize an OTEL session on their own —
+	// the injector itself (e.g. `runc exec`) has no useful env; we stash
+	// a pending session and wait for a descendant whose metadata actually
+	// resolves the rule's Expr expressions.
+	if rule.ContextStarved {
+		if err := p.manager.CreatePendingStarved(pid, rule, metadata); err != nil {
+			log.Printf("failed to create pending-starved session for PID %d (rule %q): %v", pid, rule.Name, err)
+		}
+		return nil
+	}
+
 	// Create a new session
 	session, err := p.manager.CreateSession(pid, rule, metadata)
 	if err != nil {
@@ -201,6 +212,13 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 	childPid := event.Pid
 	parentPid := event.Ppid
 
+	// If the parent belongs to a pending context-starved session, register
+	// the child there too so its later exec is routed through the
+	// materialization check.
+	if p.manager.HandleStarvedDescendantFork(childPid, parentPid) {
+		return nil
+	}
+
 	session := p.manager.AddDescendant(childPid, parentPid)
 	if session == nil {
 		// Parent not in any session — try the tracked ancestor from BPF's
@@ -220,23 +238,8 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 	pid := event.Pid
 	ppid := event.Ppid
 
-	// Add descendant to parent's session
-	session := p.manager.AddDescendant(pid, ppid)
-	if session == nil {
-		// Parent not in any session — try the tracked ancestor from BPF's
-		// ancestor walk (covers fork-without-exec intermediaries).
-		if procData := event.ProcessData(); procData != nil && procData.TrackedAncestor != 0 {
-			// First add the immediate parent (fork-only intermediate) to the session
-			p.manager.AddDescendant(ppid, procData.TrackedAncestor)
-			// Then add this process
-			session = p.manager.AddDescendant(pid, ppid)
-		}
-		if session == nil {
-			return nil
-		}
-	}
-
-	// Get metadata if available
+	// Pull pending env/metadata up front — both the starved path and the
+	// normal path need it.
 	p.mu.Lock()
 	envData := p.pendingEnv[pid]
 	delete(p.pendingEnv, pid)
@@ -257,6 +260,32 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 		existing.CmdlineFull = metadata.CmdlineFull
 	} else {
 		metadata = p.manager.MetadataManager().Get(pid)
+	}
+
+	// Pending-starved path: if the parent (or a buffered ancestor) belongs
+	// to a pending context-starved session, either this exec triggers
+	// materialization (we still emit its process.exec span) or it gets
+	// buffered for later replay.
+	if session, buffered := p.manager.HandleStarvedDescendantExec(pid, ppid, event.UID, event.Timestamp, metadata); session != nil {
+		return session.HandleProcessExec(pid, ppid, event.UID, event.Timestamp, metadata)
+	} else if buffered {
+		return nil
+	}
+
+	// Add descendant to parent's session
+	session := p.manager.AddDescendant(pid, ppid)
+	if session == nil {
+		// Parent not in any session — try the tracked ancestor from BPF's
+		// ancestor walk (covers fork-without-exec intermediaries).
+		if procData := event.ProcessData(); procData != nil && procData.TrackedAncestor != 0 {
+			// First add the immediate parent (fork-only intermediate) to the session
+			p.manager.AddDescendant(ppid, procData.TrackedAncestor)
+			// Then add this process
+			session = p.manager.AddDescendant(pid, ppid)
+		}
+		if session == nil {
+			return nil
+		}
 	}
 
 	return session.HandleProcessExec(pid, ppid, event.UID, event.Timestamp, metadata)

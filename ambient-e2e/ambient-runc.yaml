@@ -1,0 +1,39 @@
+# Config for the runc-injection experiment (see ambient-e2e/guest-run-runc.sh).
+#
+# Tests the hypothesis: processes injected into a container's namespaces via
+# `runc exec` (analog of `docker exec`) have their kernel real_parent set to
+# the injector on the host, NOT the container's PID 1. If true,
+# `is_container_init`-based matching misses all docker-exec payloads.
+#
+# Expected results if theory holds:
+#   e2e-container-init session: container PID-1 sh + whoami  (NOT id)
+#   e2e-id-witness     session: id (routed via a different rule, confirming
+#                                   the exec happened but has no parent chain
+#                                   to the container init)
+
+rules:
+  - name: "e2e-container-init"
+    match:
+      is_container_init: true
+    attributes:
+      service.name: "ambient-e2e-container-init"
+
+  # Witness rule: proves the injected `id` exec actually fired. Without it,
+  # "id not in container-init session" would be ambiguous (could mean the
+  # exec never happened vs. parent-chain routing failed).
+  - name: "e2e-id-witness"
+    match:
+      command: "id"
+    attributes:
+      service.name: "ambient-e2e-id-witness"
+
+otel:
+  endpoint: "http://10.0.2.2:14318"
+  service_name: "ambient-e2e-daemon"
+
+limits:
+  max_concurrent_sessions: 10
+  max_pids_per_session: 100
+  max_total_pids: 500
+  session_timeout: 5m
+  ring_buffer_size: 4194304

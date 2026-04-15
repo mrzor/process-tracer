@@ -103,7 +103,11 @@ func runDaemon(configPath string) error {
 		log.Printf("error stopping event stream: %v", err)
 	}
 
-	log.Printf("shutdown complete (%d sessions were active)", manager.ActiveSessions())
+	// Close every still-active session's process.tree root span before
+	// OTEL shutdown — otherwise the BatchSpanProcessor has nothing to flush
+	// for those sessions and their trees are dropped.
+	closed := manager.CloseAllSessions()
+	log.Printf("shutdown complete (%d active sessions closed)", closed)
 	return nil
 }
 
@@ -132,9 +136,13 @@ func setupDaemonOTEL(cfg *config.AmbientConfig, versionInfo string) (trace.Trace
 	cleanup := func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), otelCfg.ShutdownTimeout())
 		defer cancel()
+		start := time.Now()
+		log.Printf("OTEL shutdown: starting (timeout %v)", otelCfg.ShutdownTimeout())
 		if err := otel.ShutdownProvider(tp, shutdownCtx); err != nil {
-			log.Printf("error shutting down OTEL provider: %v", err)
+			log.Printf("error shutting down OTEL provider (took %v): %v", time.Since(start), err)
+			return
 		}
+		log.Printf("OTEL shutdown: completed in %v", time.Since(start))
 	}
 
 	return tp.Tracer("process-tracer-daemon"), cleanup, nil

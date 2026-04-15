@@ -1,8 +1,21 @@
 # Daemon mode configuration for GitLab CI.
 #
 # Port of the trace-mode shell wrapper that sets CI/CD span attributes.
-# Intended for use with is_container_init matching, so that all CI jobs
-# running as PID 1 in their container are automatically traced.
+#
+# Why `context_starved: true` on a `runc` match, not `is_container_init`:
+# GitLab Runner's docker executor injects the step script via `docker exec`,
+# which at the kernel level is `runc exec`. The kernel's `task->real_parent`
+# for these injected processes is the host-side `runc exec` — NOT the
+# container's PID 1. An `is_container_init: true` rule therefore never sees
+# the step script; it only sees the container's ENTRYPOINT subtree.
+#
+# `context_starved: true` tells the daemon: match on the injector (runc),
+# but don't start an OTEL session until a descendant's envp carries the
+# CI_* variables referenced below. GitLab Runner sets CI_* at bash runtime
+# (inside the eval'd step script), so they first appear in an execve envp
+# several levels below the injector — past a fork-only pipe subshell.
+# The daemon walks descendants through fork-only intermediaries until any
+# of the rule's Expr expressions resolves non-empty.
 #
 # skip_empty_values is enabled so that attributes whose env vars are absent
 # (e.g. MR-only or deploy-only variables) are silently omitted from spans.
@@ -10,7 +23,8 @@
 rules:
   - name: "gitlab-ci"
     match:
-      is_container_init: true
+      command: "runc"
+    context_starved: true
     skip_empty_values: true
     trace_id: 'expr:env["CI_PIPELINE_ID"]'
     # parent_id: groups all sessions within the same CI job under a common

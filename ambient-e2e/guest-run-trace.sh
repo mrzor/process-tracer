@@ -14,7 +14,7 @@ echo "[guest] Running traced parallel make..."
 # Trace mode is one invocation so we use the parallel target directly to
 # exercise concurrent siblings + the no-orphan invariant within one tree.
 export BUILD_ID="make-run-42"
-OTEL_EXPORTER_OTLP_ENDPOINT="http://10.0.2.2:4318" \
+OTEL_EXPORTER_OTLP_ENDPOINT="http://10.0.2.2:14318" \
   /tmp/process-tracer trace \
     --add-debug-attributes \
     -t 'expr:env["BUILD_ID"]' \

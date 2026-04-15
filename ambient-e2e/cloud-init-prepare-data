@@ -2,5 +2,7 @@
 packages:
   - make
   - socat
+  - runc
+  - busybox-static
 runcmd:
   - poweroff

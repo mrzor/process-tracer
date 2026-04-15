@@ -1,0 +1,43 @@
+# Config for the runc context-starved materialization experiment
+# (see ambient-e2e/guest-run-runc-starved.sh).
+#
+# The rule matches on `command: "runc"` but is marked context_starved, so
+# no OTEL session is started at the runc exec itself. Instead, descendants
+# are walked — through fork-only intermediaries — until one whose envp
+# actually resolves any of the rule's Expr expressions arrives. That
+# descendant's env is used for trace_id / attributes; the synthetic
+# process.tree root is still anchored at the runc invocation.
+#
+# Expected behavior:
+#   - `runc exec -e CI_JOB_ID=42 -e CI_PROJECT_NAME=demo ... /bin/id`
+#       materializes immediately on the `id` child (CI_* in envp).
+#   - `runc exec ... sh -c 'export CI_*=...; /bin/id'`
+#       sh is starved (no CI_* in its envp); materialization fires on
+#       the id grandchild.
+#   - `runc run` (container launch with no CI_* anywhere in the subtree)
+#       stays pending until session_timeout, then is dropped cleanly.
+
+rules:
+  - name: "runc-starved"
+    match:
+      command: "runc"
+    context_starved: true
+    skip_empty_values: true
+    trace_id: 'expr:env["CI_PIPELINE_ID"] + "-" + env["CI_JOB_ID"]'
+    attributes:
+      service.name: 'expr:env["CI_PROJECT_NAME"]'
+      ci.job.id: 'expr:env["CI_JOB_ID"]'
+      ci.pipeline.id: 'expr:env["CI_PIPELINE_ID"]'
+
+otel:
+  endpoint: "http://10.0.2.2:14318"
+  service_name: "ambient-e2e-daemon"
+
+limits:
+  max_concurrent_sessions: 10
+  max_pids_per_session: 100
+  max_total_pids: 500
+  # Short so the pending `runc run` session drops well before the e2e
+  # timeout, proving the context-starved cleanup path works.
+  session_timeout: 10s
+  ring_buffer_size: 4194304

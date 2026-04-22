@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/mrzor/process-tracer/internal/bpf"
+	"github.com/mrzor/process-tracer/internal/debuglog"
 	"github.com/mrzor/process-tracer/internal/envreassembler"
 	"github.com/mrzor/process-tracer/internal/procmeta"
+	"go.uber.org/zap"
 )
 
 // Processor routes BPF events to the appropriate trace sessions in daemon mode.
@@ -225,9 +227,36 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 		// ancestor walk (covers fork-without-exec intermediaries).
 		if procData := event.ProcessData(); procData != nil && procData.TrackedAncestor != 0 {
 			// First add the parent (fork-only intermediate) to the session
-			p.manager.AddDescendant(parentPid, procData.TrackedAncestor)
+			parentSession := p.manager.AddDescendant(parentPid, procData.TrackedAncestor)
 			// Then add the child
-			p.manager.AddDescendant(childPid, parentPid)
+			session = p.manager.AddDescendant(childPid, parentPid)
+
+			if session != nil {
+				debuglog.L.Info("ancestor_weld",
+					append(sessionLogFields(session),
+						zap.Uint32("pid", childPid),
+						zap.Uint32("ppid", parentPid),
+						zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+						zap.String("via", "fork"),
+					)...)
+			} else {
+				var comm string
+				if procData.Comm[0] != 0 {
+					n := 0
+					for n < len(procData.Comm) && procData.Comm[n] != 0 {
+						n++
+					}
+					comm = string(procData.Comm[:n])
+				}
+				debuglog.L.Info("weld_fail",
+					zap.Uint32("pid", childPid),
+					zap.Uint32("ppid", parentPid),
+					zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+					zap.Bool("parent_joined", parentSession != nil),
+					zap.String("via", "fork"),
+					zap.String("comm", comm),
+				)
+			}
 		}
 	}
 	return nil
@@ -274,21 +303,89 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 
 	// Add descendant to parent's session
 	session := p.manager.AddDescendant(pid, ppid)
+	welded := false
 	if session == nil {
 		// Parent not in any session — try the tracked ancestor from BPF's
 		// ancestor walk (covers fork-without-exec intermediaries).
 		if procData := event.ProcessData(); procData != nil && procData.TrackedAncestor != 0 {
 			// First add the immediate parent (fork-only intermediate) to the session
-			p.manager.AddDescendant(ppid, procData.TrackedAncestor)
+			parentSession := p.manager.AddDescendant(ppid, procData.TrackedAncestor)
 			// Then add this process
 			session = p.manager.AddDescendant(pid, ppid)
+
+			if session != nil {
+				welded = true
+				debuglog.L.Info("ancestor_weld",
+					append(sessionLogFields(session),
+						zap.Uint32("pid", pid),
+						zap.Uint32("ppid", ppid),
+						zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+						zap.String("via", "exec"),
+					)...)
+			} else {
+				var comm string
+				if procData.Comm[0] != 0 {
+					n := 0
+					for n < len(procData.Comm) && procData.Comm[n] != 0 {
+						n++
+					}
+					comm = string(procData.Comm[:n])
+				}
+				debuglog.L.Info("weld_fail",
+					zap.Uint32("pid", pid),
+					zap.Uint32("ppid", ppid),
+					zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+					zap.Bool("parent_joined", parentSession != nil),
+					zap.String("via", "exec"),
+					zap.String("comm", comm),
+				)
+			}
 		}
 		if session == nil {
 			return nil
 		}
+	} else {
+		debuglog.L.Info("descendant_join",
+			append(sessionLogFields(session),
+				zap.Uint32("pid", pid),
+				zap.Uint32("ppid", ppid),
+			)...)
 	}
 
+	// Trace-id mismatch probe: if this pid has its own env buffered, evaluate
+	// the session's rule trace_id expression against it and compare to the
+	// session's resolved value. A mismatch is a probable bug instance.
+	p.logTraceIDMismatchIfAny(session, pid, ppid, welded, envData)
+
 	return session.HandleProcessExec(pid, ppid, event.UID, event.Timestamp, metadata)
+}
+
+// logTraceIDMismatchIfAny emits a trace_id_mismatch event when envData (the
+// joining pid's own env) resolves the session's rule trace_id expression to
+// a value different from the session's resolved trace-id. Diagnostic-only;
+// silently no-ops on any error.
+func (p *Processor) logTraceIDMismatchIfAny(session *TraceSession, pid, ppid uint32, welded bool, envData *envreassembler.ReassembledData) {
+	if !debuglog.Enabled() {
+		return
+	}
+	if session == nil || session.Rule == nil || envData == nil {
+		return
+	}
+	selfID, selfExpr, ok := evalRuleTraceIDFromEnv(session.Rule, envData)
+	if !ok {
+		return
+	}
+	if selfID == session.ResolvedTraceID() {
+		return
+	}
+	debuglog.L.Info("trace_id_mismatch",
+		append(sessionLogFields(session),
+			zap.Uint32("pid", pid),
+			zap.Uint32("ppid", ppid),
+			zap.Bool("via_weld", welded),
+			zap.String("self_trace_id", selfID),
+			zap.String("self_trace_expr_value", selfExpr),
+		)...)
 }
 
 // handleExit handles EXIT events.

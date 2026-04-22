@@ -60,6 +60,12 @@ type OTELFormatter struct {
 	// Session root: the "process.tree" span that covers this invocation.
 	sessionRootSpan trace.Span
 	sessionRootCtx  trace.SpanContext
+
+	// Cached trace-id resolution, exposed for diagnostic logging. Populated
+	// by StartSession; do not read before it has been called.
+	resolvedTraceID        string // 32-char hex, or "" if unresolved
+	resolvedTraceExprValue string // pre-hash expr output, or "" if not expr-sourced
+	resolvedTraceSource    string // attributes.Source* value
 }
 
 // NewOTELFormatter creates a new OTEL formatter.
@@ -183,6 +189,26 @@ func (f *OTELFormatter) StartSession(ctx context.Context, metadata *procmeta.Pro
 	}
 }
 
+// ResolvedTraceID returns the 32-char hex trace ID this formatter applied to
+// the session root, or "" if the trace ID was auto-generated (unconfigured).
+// Populated by StartSession; diagnostic use only.
+func (f *OTELFormatter) ResolvedTraceID() string {
+	return f.resolvedTraceID
+}
+
+// ResolvedTraceExprValue returns the raw pre-hash value of the trace_id
+// expression (or literal) at session creation. Empty when unconfigured.
+// Diagnostic use only.
+func (f *OTELFormatter) ResolvedTraceExprValue() string {
+	return f.resolvedTraceExprValue
+}
+
+// ResolvedTraceSource returns attributes.SourceLiteral / SourceExpr /
+// SourceUnconfigured for the trace_id at session creation. Diagnostic only.
+func (f *OTELFormatter) ResolvedTraceSource() string {
+	return f.resolvedTraceSource
+}
+
 // EndSession finalizes the "process.tree" root span. Safe to call more than once.
 func (f *OTELFormatter) EndSession(endTime time.Time) {
 	if f.sessionRootSpan == nil {
@@ -215,6 +241,11 @@ func (f *OTELFormatter) resolveRootIDs(metadata *procmeta.ProcessMetadata) (
 		customTraceID = traceID
 		warnings = append(warnings, traceWarnings...)
 	}
+	if customTraceID.IsValid() {
+		f.resolvedTraceID = customTraceID.String()
+	}
+	f.resolvedTraceSource = traceRes.Source
+	f.resolvedTraceExprValue = traceRes.ResolvedValue
 
 	parentID, parentWarnings, parentRes, err := f.parentIDEvaluator.EvaluateAndValidate(metadata)
 	if err != nil {

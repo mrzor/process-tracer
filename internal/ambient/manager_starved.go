@@ -7,7 +7,9 @@ import (
 
 	"github.com/mrzor/process-tracer/internal/attributes"
 	"github.com/mrzor/process-tracer/internal/config"
+	"github.com/mrzor/process-tracer/internal/debuglog"
 	"github.com/mrzor/process-tracer/internal/procmeta"
+	"go.uber.org/zap"
 )
 
 // bufferedDescendantExec holds the exec event data for a descendant we stashed
@@ -123,6 +125,12 @@ func (m *SessionManager) CreatePendingStarved(rootPid uint32, rule *config.Ambie
 	}
 
 	log.Printf("pending-starved %s: watching PID %d (rule %q) for context-ful descendant", rule.Name, rootPid, rule.Name)
+
+	debuglog.L.Info("session_start",
+		zap.Uint32("pid", rootPid),
+		zap.String("rule", rule.Name),
+		zap.String("candidate_path", "starved_pending"),
+	)
 	return nil
 }
 
@@ -240,6 +248,12 @@ func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession
 
 	log.Printf("session %s: materialized from pending-starved %q with %d buffered descendants", session.ID, rule.Name, len(descendants))
 
+	debuglog.L.Info("starved_materialize",
+		append(sessionLogFields(session),
+			zap.Uint32("root_pid", rootPid),
+			zap.Int("buffered_descendants", len(descendants)),
+		)...)
+
 	// Replay buffered descendants in order. Each was already observed by
 	// BPF's exec tracking; we just need to produce the Go-side session
 	// routing and the process.exec spans.
@@ -278,6 +292,13 @@ func (m *SessionManager) dropPendingStarvedLocked(pending *pendingStarvedSession
 	}
 	log.Printf("pending-starved %s: dropped (root PID %d, %d buffered descendants never resolved context)",
 		pending.rule.Name, rootPid, len(pending.descendants))
+
+	debuglog.L.Info("starved_drop",
+		zap.Uint32("root_pid", rootPid),
+		zap.String("rule", pending.rule.Name),
+		zap.Int("buffered_descendants", len(pending.descendants)),
+		zap.Int64("pending_age_ms", time.Since(pending.createdAt).Milliseconds()),
+	)
 }
 
 // cleanupStalePendingStarvedLocked drops pending sessions older than the

@@ -78,6 +78,24 @@ func (s *TraceSession) EndSession(endTime time.Time) {
 	s.formatter.EndSession(endTime)
 }
 
+// ResolvedTraceID returns the 32-char hex trace ID applied at StartSession,
+// or "" if auto-generated. Diagnostic use only.
+func (s *TraceSession) ResolvedTraceID() string {
+	return s.formatter.ResolvedTraceID()
+}
+
+// ResolvedTraceExprValue returns the raw pre-hash value of the trace_id
+// expression (or literal) at session creation. Diagnostic use only.
+func (s *TraceSession) ResolvedTraceExprValue() string {
+	return s.formatter.ResolvedTraceExprValue()
+}
+
+// ResolvedTraceSource returns one of attributes.Source* describing how the
+// trace_id was derived. Diagnostic use only.
+func (s *TraceSession) ResolvedTraceSource() string {
+	return s.formatter.ResolvedTraceSource()
+}
+
 // HandleProcessExec delegates to the session's formatter.
 func (s *TraceSession) HandleProcessExec(pid, ppid, uid uint32, timestamp uint64, metadata *procmeta.ProcessMetadata) error {
 	return s.formatter.HandleProcessExec(pid, ppid, uid, timestamp, metadata)

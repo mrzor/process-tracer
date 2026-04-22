@@ -13,6 +13,7 @@ import (
 	"github.com/mrzor/process-tracer/internal/ambient"
 	"github.com/mrzor/process-tracer/internal/bpfloader"
 	"github.com/mrzor/process-tracer/internal/config"
+	"github.com/mrzor/process-tracer/internal/debuglog"
 	"github.com/mrzor/process-tracer/internal/eventstream"
 	"github.com/mrzor/process-tracer/internal/otel"
 	"github.com/mrzor/process-tracer/internal/procmeta"
@@ -24,6 +25,7 @@ import (
 
 func daemonCommand() *cli.Command {
 	var configPath string
+	var debugLogPath string
 
 	return &cli.Command{
 		Name:  "daemon",
@@ -37,14 +39,20 @@ func daemonCommand() *cli.Command {
 				Sources:     cli.EnvVars("PROCESS_TRACER_DAEMON_CONFIG"),
 				Required:    true,
 			},
+			&cli.StringFlag{
+				Name:        "debug-log",
+				Usage:       "Write detailed routing-diagnostic events (JSON lines) to this file. Disabled when empty.",
+				Destination: &debugLogPath,
+				Sources:     cli.EnvVars("PROCESS_TRACER_DEBUG_LOG"),
+			},
 		},
 		Action: func(_ context.Context, _ *cli.Command) error {
-			return runDaemon(configPath)
+			return runDaemon(configPath, debugLogPath)
 		},
 	}
 }
 
-func runDaemon(configPath string) error {
+func runDaemon(configPath, debugLogPath string) error {
 	cfg, err := config.LoadAmbientConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -52,6 +60,15 @@ func runDaemon(configPath string) error {
 
 	log.Printf("process-tracer daemon %s (commit %s, built %s)", version, commit, date)
 	log.Printf("loaded %d rules", len(cfg.Rules))
+
+	dbgCleanup, err := debuglog.Init(debugLogPath)
+	if err != nil {
+		return fmt.Errorf("opening debug log: %w", err)
+	}
+	defer dbgCleanup()
+	if debugLogPath != "" {
+		log.Printf("debug-log: writing routing diagnostics to %s", debugLogPath)
+	}
 
 	versionInfo := fmt.Sprintf("%s (%s)", version, commit)
 	tracer, otelCleanup, err := setupDaemonOTEL(cfg, versionInfo)

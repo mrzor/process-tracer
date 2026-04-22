@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/mrzor/process-tracer/internal/config"
+	"github.com/mrzor/process-tracer/internal/debuglog"
 	"github.com/mrzor/process-tracer/internal/output"
 	"github.com/mrzor/process-tracer/internal/procmeta"
 	"github.com/mrzor/process-tracer/internal/reversedns"
 	"github.com/mrzor/process-tracer/internal/timesync"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 // PIDTracker abstracts BPF PID tracking operations for testability.
@@ -140,6 +142,13 @@ func (m *SessionManager) createSessionLocked(pid uint32, rule *config.AmbientRul
 	m.catchUpChildren(pid, session)
 
 	log.Printf("session %s: started tracing PID %d (rule %q)", sessionID, pid, rule.Name)
+
+	debuglog.L.Info("session_start",
+		append(sessionLogFields(session),
+			zap.Uint32("pid", pid),
+			zap.Uint32("matched_pid", pid),
+			zap.String("candidate_path", "rule_match"),
+		)...)
 	return session, nil
 }
 
@@ -201,9 +210,17 @@ func (m *SessionManager) HandleExit(pid uint32) (*TraceSession, bool) {
 	empty := session.RemovePID(pid)
 	if empty {
 		// Close the synthetic "process.tree" root span; the session is done.
-		session.EndSession(time.Now())
+		now := time.Now()
+		session.EndSession(now)
 		delete(m.sessions, session.ID)
 		log.Printf("session %s: completed (root PID %d)", session.ID, session.RootPID)
+
+		debuglog.L.Info("session_end",
+			append(sessionLogFields(session),
+				zap.Uint32("root_pid", session.RootPID),
+				zap.Int64("duration_ms", now.Sub(session.CreatedAt).Milliseconds()),
+				zap.String("reason", "completed"),
+			)...)
 	}
 
 	return session, empty
@@ -231,6 +248,13 @@ func (m *SessionManager) CleanupStale() {
 			// Close the synthetic "process.tree" root span for the timed-out session.
 			session.EndSession(now)
 			delete(m.sessions, id)
+
+			debuglog.L.Info("session_end",
+				append(sessionLogFields(session),
+					zap.Uint32("root_pid", session.RootPID),
+					zap.Int64("duration_ms", now.Sub(session.CreatedAt).Milliseconds()),
+					zap.String("reason", "timeout"),
+				)...)
 		}
 	}
 }
@@ -273,6 +297,12 @@ func (m *SessionManager) catchUpChildren(pid uint32, session *TraceSession) {
 		if err := m.loader.TrackPID(int(cpid)); err != nil {
 			log.Printf("session %s: catch-up TrackPID(%d) failed: %v", session.ID, cpid, err)
 		}
+
+		debuglog.L.Info("catchup_track",
+			append(sessionLogFields(session),
+				zap.Uint32("pid", cpid),
+				zap.Uint32("parent_pid", pid),
+			)...)
 	}
 }
 

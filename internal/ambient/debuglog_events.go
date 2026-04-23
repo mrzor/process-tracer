@@ -1,6 +1,8 @@
 package ambient
 
 import (
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/mrzor/process-tracer/internal/attributes"
@@ -9,6 +11,55 @@ import (
 	"github.com/mrzor/process-tracer/internal/procmeta"
 	"go.uber.org/zap"
 )
+
+// envKeysWithPrefix returns a sorted list of env keys matching the given
+// prefix. Diagnostic-only: caps at maxKeys to bound log size, values are
+// never included (PII / volume).
+func envKeysWithPrefix(env map[string]string, prefix string, maxKeys int) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	if maxKeys > 0 && len(keys) > maxKeys {
+		keys = keys[:maxKeys]
+	}
+	return keys
+}
+
+// attrProbeEntry is one attribute's resolved name + value length, for logging
+// without leaking the value itself.
+type attrProbeEntry struct {
+	Name     string `json:"name"`
+	ValueLen int    `json:"value_len"`
+}
+
+// probeAttributes evaluates the given attribute evaluator and returns entries
+// describing each attribute's resolution. When nonEmptyOnly=true, entries with
+// empty values are dropped. Silently returns nil on evaluator error.
+func probeAttributes(ev *attributes.Evaluator, meta *procmeta.ProcessMetadata, nonEmptyOnly bool) []attrProbeEntry {
+	if ev == nil || meta == nil {
+		return nil
+	}
+	attrs, err := ev.EvaluateCustomAttributes(meta)
+	if err != nil {
+		return nil
+	}
+	out := make([]attrProbeEntry, 0, len(attrs))
+	for _, a := range attrs {
+		v := a.Value.AsString()
+		if nonEmptyOnly && v == "" {
+			continue
+		}
+		out = append(out, attrProbeEntry{Name: string(a.Key), ValueLen: len(v)})
+	}
+	return out
+}
 
 // sessionLogFields packages the fields common to every diagnostic event that
 // references an existing session. Keep field names stable — downstream jq

@@ -126,11 +126,22 @@ func (m *SessionManager) CreatePendingStarved(rootPid uint32, rule *config.Ambie
 
 	log.Printf("pending-starved %s: watching PID %d (rule %q) for context-ful descendant", rule.Name, rootPid, rule.Name)
 
-	debuglog.L.Info("session_start",
+	fields := []zap.Field{
 		zap.Uint32("pid", rootPid),
 		zap.String("rule", rule.Name),
 		zap.String("candidate_path", "starved_pending"),
-	)
+	}
+	if debuglog.Enabled() {
+		envCount := 0
+		if rootMeta != nil && rootMeta.Environ != nil {
+			envCount = len(rootMeta.Environ)
+		}
+		fields = append(fields,
+			zap.Int("injector_env_key_count", envCount),
+			zap.Any("injector_attr_nonempty", probeAttributes(probeAttr, rootMeta, true)),
+		)
+	}
+	debuglog.L.Info("session_start", fields...)
 	return nil
 }
 
@@ -186,6 +197,22 @@ func (m *SessionManager) HandleStarvedDescendantExec(pid, ppid, uid uint32, time
 		metadata:  metadata,
 	})
 	m.pendingStarvedByPid[pid] = rootPid
+
+	if debuglog.Enabled() {
+		envCount := 0
+		if metadata != nil && metadata.Environ != nil {
+			envCount = len(metadata.Environ)
+		}
+		debuglog.L.Info("starved_buffer",
+			zap.String("rule", pending.rule.Name),
+			zap.Uint32("root_pid", rootPid),
+			zap.Uint32("pid", pid),
+			zap.Uint32("ppid", ppid),
+			zap.Int("buffered_count", len(pending.descendants)),
+			zap.Int("env_key_count", envCount),
+			zap.Any("attr_resolved", probeAttributes(pending.probeAttr, metadata, false)),
+		)
+	}
 	return nil, true
 }
 
@@ -228,6 +255,30 @@ func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession
 	// rule's Expr — e.g. env["CI_JOB_ID"] — resolves against real data).
 	merged := mergeMetadataForMaterialization(pending.rootMeta, descMeta)
 
+	if debuglog.Enabled() {
+		resolvedLen := 0
+		if pending.probeTrace != nil {
+			if _, _, res, err := pending.probeTrace.EvaluateAndValidate(merged); err == nil {
+				resolvedLen = len(res.ResolvedValue)
+			}
+		}
+		envCount := 0
+		var ciKeys []string
+		if merged != nil && merged.Environ != nil {
+			envCount = len(merged.Environ)
+			ciKeys = envKeysWithPrefix(merged.Environ, "CI_", 32)
+		}
+		debuglog.L.Info("starved_env_probe",
+			zap.String("rule", pending.rule.Name),
+			zap.Uint32("root_pid", pending.rootPid),
+			zap.String("trace_id_expr_source", pending.rule.TraceID),
+			zap.Int("trace_id_resolved_value_len", resolvedLen),
+			zap.Int("env_key_count", envCount),
+			zap.Strings("env_keys_prefix_ci", ciKeys),
+			zap.Any("attr_nonempty", probeAttributes(pending.probeAttr, merged, true)),
+		)
+	}
+
 	// Drop pending state atomically before calling CreateSession's
 	// storeMetadata path, which would otherwise overwrite probe state.
 	rootPid := pending.rootPid
@@ -259,6 +310,12 @@ func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession
 	// routing and the process.exec spans.
 	for _, d := range descendants {
 		m.addDescendantLocked(session, d.pid, d.ppid)
+		debuglog.L.Info("descendant_join",
+			append(sessionLogFields(session),
+				zap.Uint32("pid", d.pid),
+				zap.Uint32("ppid", d.ppid),
+				zap.String("via", "starved_replay"),
+			)...)
 		if err := session.HandleProcessExec(d.pid, d.ppid, d.uid, d.timestamp, d.metadata); err != nil {
 			log.Printf("session %s: replay exec for PID %d failed: %v", session.ID, d.pid, err)
 		}

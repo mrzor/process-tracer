@@ -222,6 +222,14 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 	}
 
 	session := p.manager.AddDescendant(childPid, parentPid)
+	if session != nil {
+		debuglog.L.Info("descendant_join",
+			append(sessionLogFields(session),
+				zap.Uint32("pid", childPid),
+				zap.Uint32("ppid", parentPid),
+				zap.String("via", "fork"),
+			)...)
+	}
 	if session == nil {
 		// Parent not in any session — try the tracked ancestor from BPF's
 		// ancestor walk (covers fork-without-exec intermediaries).

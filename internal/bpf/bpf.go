@@ -68,6 +68,8 @@ type ProcessEventData struct {
 	IsContainerInit uint32 // 1 if PID 1 in a non-root PID namespace
 	NsLevel         uint32 // PID namespace nesting level (0 = root)
 	TrackedAncestor uint32 // PID found via ancestor walk (0 if immediate parent was tracked)
+	PidNsInum       uint32 // task->nsproxy->pid_ns_for_children->ns.inum; lets userland
+	                       // group events by PID namespace across container-runtime transitions
 }
 
 // TCPEventData matches the tcp struct in the C union.

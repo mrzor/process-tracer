@@ -31,6 +31,10 @@ struct event {
             __u32 ns_level;            // PID namespace nesting level (0 = root)
             __u32 tracked_ancestor;    // PID of the ancestor found in tracked_pids
                                        // via ancestor walk (0 if immediate parent was tracked)
+            __u32 pid_ns_inum;         // inode number of task->nsproxy->pid_ns_for_children->ns;
+                                       // lets userland group events by PID namespace, catching
+                                       // container-runtime ns transitions that would otherwise be
+                                       // invisible in flat host-PID view
         } proc;
 
         // TCP event fields

@@ -483,6 +483,7 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
         unsigned int level = bpf_core_cast(pid_ns, struct pid_namespace)->level;
         e->data.proc.ns_level = level;
         e->data.proc.is_container_init = (level > 0 && bpf_core_cast(pid_ns, struct pid_namespace)->child_reaper == task) ? 1 : 0;
+        e->data.proc.pid_ns_inum = bpf_core_cast(pid_ns, struct pid_namespace)->ns.inum;
     }
 
     bpf_ringbuf_submit(e, 0);
@@ -557,6 +558,12 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
     e->uid = (u32)bpf_get_current_uid_gid();
     e->timestamp = bpf_ktime_get_ns();
     e->data.proc.tracked_ancestor = (ancestor_pid != parent_pid) ? ancestor_pid : 0;
+    /* PID namespace inum — caller's (forking task's) namespace; child
+     * inherits unless CLONE_NEWPID was set, which is the interesting case. */
+    {
+        struct task_struct *t = (struct task_struct *)bpf_get_current_task_btf();
+        e->data.proc.pid_ns_inum = bpf_core_cast(t, struct task_struct)->nsproxy->pid_ns_for_children->ns.inum;
+    }
 
     bpf_ringbuf_submit(e, 0);
 
@@ -602,6 +609,7 @@ int handle_exit(struct trace_event_raw_sched_process_template *ctx)
     e->ppid = ppid;
 
     e->data.proc.exit_code = (bpf_core_cast(task, struct task_struct)->exit_code >> 8) & 0xff;
+    e->data.proc.pid_ns_inum = bpf_core_cast(task, struct task_struct)->nsproxy->pid_ns_for_children->ns.inum;
 
     bpf_get_current_comm(&e->data.proc.comm, sizeof(e->data.proc.comm));
 

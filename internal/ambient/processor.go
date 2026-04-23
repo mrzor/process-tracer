@@ -222,8 +222,10 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 	}
 
 	var forkComm string
+	var forkNsInum uint32
 	if procData := event.ProcessData(); procData != nil {
 		forkComm = commString(procData.Comm[:])
+		forkNsInum = procData.PidNsInum
 	}
 
 	session := p.manager.AddDescendant(childPid, parentPid)
@@ -232,6 +234,7 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 			append(sessionLogFields(session),
 				zap.Uint32("pid", childPid),
 				zap.Uint32("ppid", parentPid),
+				zap.Uint32("pid_ns_inum", forkNsInum),
 				zap.String("via", "fork"),
 				zap.String("comm", forkComm),
 			)...)
@@ -251,6 +254,7 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 						zap.Uint32("pid", childPid),
 						zap.Uint32("ppid", parentPid),
 						zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+						zap.Uint32("pid_ns_inum", forkNsInum),
 						zap.String("via", "fork"),
 						zap.String("comm", forkComm),
 					)...)
@@ -259,6 +263,7 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 					zap.Uint32("pid", childPid),
 					zap.Uint32("ppid", parentPid),
 					zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+					zap.Uint32("pid_ns_inum", forkNsInum),
 					zap.Bool("parent_joined", parentSession != nil),
 					zap.String("via", "fork"),
 					zap.String("comm", forkComm),
@@ -276,9 +281,11 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 
 	var execComm string
 	var trackedAncestor uint32
+	var pidNsInum uint32
 	if procData := event.ProcessData(); procData != nil {
 		execComm = commString(procData.Comm[:])
 		trackedAncestor = procData.TrackedAncestor
+		pidNsInum = procData.PidNsInum
 	}
 
 	// Pull pending env/metadata up front — both the starved path and the
@@ -334,6 +341,7 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 						zap.Uint32("pid", pid),
 						zap.Uint32("ppid", ppid),
 						zap.Uint32("tracked_ancestor", trackedAncestor),
+						zap.Uint32("pid_ns_inum", pidNsInum),
 						zap.String("via", "exec"),
 						zap.String("comm", execComm),
 					)...)
@@ -342,6 +350,7 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 					zap.Uint32("pid", pid),
 					zap.Uint32("ppid", ppid),
 					zap.Uint32("tracked_ancestor", trackedAncestor),
+					zap.Uint32("pid_ns_inum", pidNsInum),
 					zap.Bool("parent_joined", parentSession != nil),
 					zap.String("via", "exec"),
 					zap.String("comm", execComm),
@@ -357,6 +366,7 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 				zap.Uint32("pid", pid),
 				zap.Uint32("ppid", ppid),
 				zap.Uint32("tracked_ancestor", trackedAncestor),
+				zap.Uint32("pid_ns_inum", pidNsInum),
 				zap.String("comm", execComm),
 			)
 			return nil
@@ -366,6 +376,7 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 			append(sessionLogFields(session),
 				zap.Uint32("pid", pid),
 				zap.Uint32("ppid", ppid),
+				zap.Uint32("pid_ns_inum", pidNsInum),
 				zap.String("via", "exec"),
 				zap.String("comm", execComm),
 			)...)

@@ -391,6 +391,65 @@ int trace_execve_enter(struct trace_event_raw_sys_enter *ctx)
     return 0;
 }
 
+/* emit_ancestor_trace: dump up to ANCESTOR_TRACE_MAX_HOPS hops of the
+ * real_parent chain starting from `task`'s immediate parent. Each hop
+ * records tgid, comm, pid_ns inum, and whether that tgid is currently in
+ * tracked_pids. Caller must guarantee `task` is valid. Called only from
+ * diagnostic paths (exec/fork with no tracked ancestor found) so its
+ * cost only matters there. Returns 0 always.
+ */
+static __always_inline int emit_ancestor_trace(pid_t subject_pid, pid_t subject_ppid, u32 subject_uid, u8 reason)
+{
+    struct ancestor_trace_event *ev;
+    struct task_struct *walk;
+
+    ev = bpf_ringbuf_reserve(&rb, sizeof(*ev), 0);
+    if (!ev)
+        return 0;
+
+    ev->pid = subject_pid;
+    ev->ppid = subject_ppid;
+    ev->uid = subject_uid;
+    ev->timestamp = bpf_ktime_get_ns();
+    ev->type = EVENT_ANCESTOR_TRACE;
+    ev->reason = reason;
+    ev->num_hops = 0;
+
+    walk = (struct task_struct *)bpf_get_current_task_btf();
+    walk = bpf_core_cast(walk, struct task_struct)->real_parent;
+
+    #pragma unroll
+    for (int i = 0; i < ANCESTOR_TRACE_MAX_HOPS; i++) {
+        pid_t w_tgid;
+        struct pid_namespace *pid_ns;
+
+        if (!walk)
+            break;
+
+        w_tgid = bpf_core_cast(walk, struct task_struct)->tgid;
+        if (w_tgid <= 0)
+            break;
+
+        ev->hops[i].tgid = (u32)w_tgid;
+        bpf_probe_read_kernel_str(ev->hops[i].comm, TASK_COMM_LEN, bpf_core_cast(walk, struct task_struct)->comm);
+
+        pid_ns = bpf_core_cast(walk, struct task_struct)->nsproxy->pid_ns_for_children;
+        ev->hops[i].pid_ns_inum = pid_ns ? bpf_core_cast(pid_ns, struct pid_namespace)->ns.inum : 0;
+
+        ev->hops[i].tracked = bpf_map_lookup_elem(&tracked_pids, &w_tgid) ? 1 : 0;
+
+        ev->num_hops = i + 1;
+
+        if (w_tgid <= 1)
+            break;
+
+        walk = bpf_core_cast(walk, struct task_struct)->real_parent;
+    }
+
+    bpf_ringbuf_submit(ev, 0);
+    return 0;
+}
+
 SEC("tp/sched/sched_process_exec")
 int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
 {
@@ -456,7 +515,11 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
             e->data.proc.tracked_ancestor = ancestor_pid;
         } else if (ambient_mode) {
             /* No tracked ancestor found - emit EXEC_CANDIDATE for Go-side filtering.
-             * Do NOT add to tracked_pids yet; Go decides after filter evaluation. */
+             * Do NOT add to tracked_pids yet; Go decides after filter evaluation.
+             * Emit an ancestor_trace first so Go can correlate (by pid +
+             * timestamp) and see the full 16-level chain even though the
+             * 8-level tracking walk above found nothing. */
+            emit_ancestor_trace(pid, ppid, (u32)uid_gid, /*reason=*/0);
             e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
             if (!e)
                 return 0;
@@ -533,8 +596,14 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
             walk = grandparent;
         }
 
-        if (!ancestor_pid)
+        if (!ancestor_pid) {
+            /* Fork from an untracked ancestor chain — emit a trace so
+             * userland can see why the walk failed. Gate on ambient_mode
+             * to avoid noise in direct mode. */
+            if (ambient_mode)
+                emit_ancestor_trace(child_pid, parent_pid, (u32)bpf_get_current_uid_gid(), /*reason=*/1);
             return 0;
+        }
 
         /* Back-fill the parent into tracked_pids so its future forks
          * are caught immediately without another ancestor walk. */

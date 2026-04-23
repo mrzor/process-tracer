@@ -12,6 +12,38 @@ enum event_type {
     EVENT_ENV_VAR = 6,
     EVENT_EXEC_CANDIDATE = 7,
     EVENT_FORK = 8,
+    EVENT_ANCESTOR_TRACE = 9,
+};
+
+// Full ancestor-chain dump emitted BEFORE EVENT_EXEC_CANDIDATE /
+// weld-fail when BPF's 8-level tracking walk couldn't find any tracked
+// ancestor. Userland correlates by (pid, timestamp_ns) with the
+// exec_unclaimed / weld_fail event that follows. Purpose: answer
+// "what *is* the ancestor chain, and does it reach a tracked PID at
+// all, and if so how far up?" — a separate 16-level walk records
+// tgid/comm/ns_inum/tracked for each hop, without stopping at the
+// first tracked pid.
+#define ANCESTOR_TRACE_MAX_HOPS 16
+
+struct ancestor_hop {
+    __u32 tgid;
+    __u32 pid_ns_inum;
+    char comm[TASK_COMM_LEN];
+    __u8 tracked;          // 1 if this tgid is in tracked_pids at sample time
+    __u8 _pad[3];
+};
+
+struct ancestor_trace_event {
+    __u32 pid;             // subject: the exec'ing (or forking-child) pid
+    __u32 ppid;            // immediate parent tgid, for quick correlation
+    __u32 uid;
+    __u32 _pad1;           // align to 8 before timestamp
+    __u64 timestamp;
+    __u8 type;             // EVENT_ANCESTOR_TRACE
+    __u8 num_hops;         // 0..ANCESTOR_TRACE_MAX_HOPS
+    __u8 reason;           // 0=exec_no_ancestor, 1=fork_no_ancestor
+    __u8 _pad2[5];
+    struct ancestor_hop hops[ANCESTOR_TRACE_MAX_HOPS];
 };
 
 struct event {

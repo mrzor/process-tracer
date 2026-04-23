@@ -14,6 +14,7 @@ type EventHandler interface {
 	HandleEvent(event *bpf.Event) error
 	HandleEnvChunk(chunk *bpf.EnvChunkEvent) error
 	HandleEnvVar(envVar *bpf.EnvVarEvent) error
+	HandleAncestorTrace(trace *bpf.AncestorTraceEvent) error
 }
 
 // ProcessEventHandler handles processed process events.
@@ -54,6 +55,12 @@ func NewProcessor(
 		processHandler:       processHandler,
 		tcpHandler:           tcpHandler,
 	}
+}
+
+// HandleAncestorTrace is a no-op in direct mode — this handler is ambient-only
+// diagnostic. Kept on the type to satisfy the EventHandler interface.
+func (p *Processor) HandleAncestorTrace(_ *bpf.AncestorTraceEvent) error {
+	return nil
 }
 
 // HandleEvent routes events by type to specialized handlers.

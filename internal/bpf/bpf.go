@@ -21,7 +21,38 @@ const (
 	EVENT_ENV_VAR        = 6
 	EVENT_EXEC_CANDIDATE = 7
 	EVENT_FORK           = 8
+	EVENT_ANCESTOR_TRACE = 9
 )
+
+// AncestorTraceMaxHops mirrors ANCESTOR_TRACE_MAX_HOPS in process_tracer.h.
+const AncestorTraceMaxHops = 16
+
+// AncestorHop mirrors struct ancestor_hop in process_tracer.h.
+type AncestorHop struct {
+	Tgid       uint32
+	PidNsInum  uint32
+	Comm       [16]byte
+	Tracked    uint8
+	_          [3]byte
+}
+
+// AncestorTraceEvent matches struct ancestor_trace_event in
+// process_tracer.h. Emitted by BPF before an exec_candidate /
+// fork-no-ancestor event so userland sees the full 16-level real_parent
+// chain even though the 8-level tracking walk found nothing. Correlate
+// with the following exec_unclaimed / weld_fail by (Pid, Timestamp).
+type AncestorTraceEvent struct {
+	Pid       uint32
+	Ppid      uint32
+	UID       uint32
+	Pad1      uint32
+	Timestamp uint64
+	Type      uint8 // EVENT_ANCESTOR_TRACE
+	NumHops   uint8
+	Reason    uint8 // 0 = exec_no_ancestor, 1 = fork_no_ancestor
+	_         [5]byte
+	Hops      [AncestorTraceMaxHops]AncestorHop
+}
 
 // Event matches the C struct from process_tracer.h.
 // Using explicit struct layout to match C union.

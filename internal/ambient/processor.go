@@ -50,6 +50,39 @@ func NewProcessor(filter *FilterEngine, manager *SessionManager) *Processor {
 	}
 }
 
+// HandleAncestorTrace logs BPF's 16-level real_parent walk when no
+// tracked ancestor was found. Correlate with the subsequent
+// exec_unclaimed / weld_fail event by (pid, timestamp). One event per
+// unclaimed exec or unclaimed fork — rare, so the log volume is bounded.
+func (p *Processor) HandleAncestorTrace(ev *bpf.AncestorTraceEvent) error {
+	if !debuglog.Enabled() {
+		return nil
+	}
+	hops := make([]map[string]any, 0, ev.NumHops)
+	for i := 0; i < int(ev.NumHops) && i < len(ev.Hops); i++ {
+		h := ev.Hops[i]
+		hops = append(hops, map[string]any{
+			"tgid":        h.Tgid,
+			"comm":        commString(h.Comm[:]),
+			"pid_ns_inum": h.PidNsInum,
+			"tracked":     h.Tracked != 0,
+		})
+	}
+	reason := "exec_no_ancestor"
+	if ev.Reason == 1 {
+		reason = "fork_no_ancestor"
+	}
+	debuglog.L.Info("ancestor_trace",
+		zap.Uint32("pid", ev.Pid),
+		zap.Uint32("ppid", ev.Ppid),
+		zap.String("reason", reason),
+		zap.Uint64("timestamp_ns", ev.Timestamp),
+		zap.Int("num_hops", int(ev.NumHops)),
+		zap.Any("hops", hops),
+	)
+	return nil
+}
+
 // HandleEvent routes regular events (EXEC, EXIT, TCP, EXEC_CANDIDATE).
 func (p *Processor) HandleEvent(event *bpf.Event) error {
 	switch event.Type {

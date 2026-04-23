@@ -95,6 +95,18 @@ func (s *Stream) processEvents(ctx context.Context) {
 				if err := s.handler.HandleEnvVar(&envVar); err != nil {
 					log.Printf("handling env var: %v", err)
 				}
+			case bpf.EVENT_ANCESTOR_TRACE:
+				// Full 16-level real_parent dump emitted when BPF's tracking
+				// walk couldn't find a tracked ancestor. Userland logs it as
+				// a debug-log event for post-mortem.
+				var at bpf.AncestorTraceEvent
+				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &at); err != nil {
+					log.Printf("parsing ancestor trace event: %v", err)
+					continue
+				}
+				if err := s.handler.HandleAncestorTrace(&at); err != nil {
+					log.Printf("handling ancestor trace: %v", err)
+				}
 			default:
 				// Regular event
 				var event bpf.Event

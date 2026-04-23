@@ -30,6 +30,8 @@ type Loader struct {
 	tcpV6ConnectEntry link.Link
 	tcpV6ConnectExit  link.Link
 	forkLink          link.Link
+	cloneLink         link.Link
+	clone3Link        link.Link
 }
 
 // New creates a new Loader and loads the BPF objects into the kernel.
@@ -80,6 +82,12 @@ func NewWithOptions(opts LoaderOptions) (*Loader, error) {
 func (l *Loader) closeErrorf(errstr string, e error) error {
 	// Close all links that may have been attached (nil-safe)
 	// We intentionally ignore errors during cleanup here since we're already in an error path
+	if l.clone3Link != nil {
+		_ = l.clone3Link.Close() //nolint:errcheck // Best-effort cleanup in error path
+	}
+	if l.cloneLink != nil {
+		_ = l.cloneLink.Close() //nolint:errcheck // Best-effort cleanup in error path
+	}
 	if l.forkLink != nil {
 		_ = l.forkLink.Close() //nolint:errcheck // Best-effort cleanup in error path
 	}
@@ -136,6 +144,17 @@ func (l *Loader) Attach() error {
 	l.forkLink, err = link.Tracepoint("sched", "sched_process_fork", l.objs.HandleFork, nil)
 	if err != nil {
 		return l.closeErrorf("attaching fork tracepoint", err)
+	}
+
+	// Attach clone/clone3 syscall tracepoints (ambient-mode diagnostic).
+	// The BPF side gates on ambient_mode, so in direct mode these fire
+	// but return immediately. Failing to attach is non-fatal — some
+	// kernel configs may lack these tracepoints.
+	if ln, attachErr := link.Tracepoint("syscalls", "sys_enter_clone", l.objs.TraceClone, nil); attachErr == nil {
+		l.cloneLink = ln
+	}
+	if ln, attachErr := link.Tracepoint("syscalls", "sys_enter_clone3", l.objs.TraceClone3, nil); attachErr == nil {
+		l.clone3Link = ln
 	}
 
 	// Attach kprobes for TCP connect tracking
@@ -210,6 +229,8 @@ func (l *Loader) Close() error {
 		{"TCP v6 connect entry", l.tcpV6ConnectEntry},
 		{"TCP v4 connect exit", l.tcpV4ConnectExit},
 		{"TCP v4 connect entry", l.tcpV4ConnectEntry},
+		{"clone3", l.clone3Link},
+		{"clone", l.cloneLink},
 		{"fork", l.forkLink},
 		{"exit", l.exitLink},
 		{"exec", l.execLink},

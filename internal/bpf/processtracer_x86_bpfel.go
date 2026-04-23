@@ -84,6 +84,8 @@ type processTracerProgramSpecs struct {
 	TcpV4ConnectExit       *ebpf.ProgramSpec `ebpf:"tcp_v4_connect_exit"`
 	TcpV6ConnectEntry      *ebpf.ProgramSpec `ebpf:"tcp_v6_connect_entry"`
 	TcpV6ConnectExit       *ebpf.ProgramSpec `ebpf:"tcp_v6_connect_exit"`
+	TraceClone             *ebpf.ProgramSpec `ebpf:"trace_clone"`
+	TraceClone3            *ebpf.ProgramSpec `ebpf:"trace_clone3"`
 	TraceExecveEnter       *ebpf.ProgramSpec `ebpf:"trace_execve_enter"`
 }
 
@@ -170,6 +172,8 @@ type processTracerPrograms struct {
 	TcpV4ConnectExit       *ebpf.Program `ebpf:"tcp_v4_connect_exit"`
 	TcpV6ConnectEntry      *ebpf.Program `ebpf:"tcp_v6_connect_entry"`
 	TcpV6ConnectExit       *ebpf.Program `ebpf:"tcp_v6_connect_exit"`
+	TraceClone             *ebpf.Program `ebpf:"trace_clone"`
+	TraceClone3            *ebpf.Program `ebpf:"trace_clone3"`
 	TraceExecveEnter       *ebpf.Program `ebpf:"trace_execve_enter"`
 }
 
@@ -183,6 +187,8 @@ func (p *processTracerPrograms) Close() error {
 		p.TcpV4ConnectExit,
 		p.TcpV6ConnectEntry,
 		p.TcpV6ConnectExit,
+		p.TraceClone,
+		p.TraceClone3,
 		p.TraceExecveEnter,
 	)
 }

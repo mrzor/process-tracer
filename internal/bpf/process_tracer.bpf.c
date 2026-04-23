@@ -639,6 +639,73 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
     return 0;
 }
 
+/* clone() / clone3() syscall entry — emit flags + caller info so
+ * userland can correlate with the subsequent sched_process_fork event
+ * and investigate whether unusual flag combinations (CLONE_PARENT,
+ * CLONE_NEWPID, CLONE_THREAD...) change what parent_pid the fork
+ * tracepoint records. Only active in ambient mode. */
+SEC("tp/syscalls/sys_enter_clone")
+int trace_clone(struct trace_event_raw_sys_enter *ctx)
+{
+    struct clone_syscall_event *ev;
+    u64 pid_tgid;
+
+    if (!ambient_mode)
+        return 0;
+
+    ev = bpf_ringbuf_reserve(&rb, sizeof(*ev), 0);
+    if (!ev)
+        return 0;
+
+    pid_tgid = bpf_get_current_pid_tgid();
+    ev->tgid = pid_tgid >> 32;
+    ev->uid = (u32)bpf_get_current_uid_gid();
+    ev->flags = (u64)ctx->args[0];
+    ev->timestamp = bpf_ktime_get_ns();
+    ev->type = EVENT_CLONE_SYSCALL;
+    ev->variant = 0;
+    bpf_get_current_comm(&ev->comm, sizeof(ev->comm));
+
+    bpf_ringbuf_submit(ev, 0);
+    return 0;
+}
+
+SEC("tp/syscalls/sys_enter_clone3")
+int trace_clone3(struct trace_event_raw_sys_enter *ctx)
+{
+    struct clone_syscall_event *ev;
+    u64 pid_tgid;
+    u64 flags = 0;
+    void *cl_args_ptr;
+
+    if (!ambient_mode)
+        return 0;
+
+    /* clone3(struct clone_args *cl_args, size_t size). Read the flags
+     * field (first 8 bytes of struct clone_args) from user memory.
+     * Ignore read errors — in that case flags stays 0 and the event
+     * still carries caller info. */
+    cl_args_ptr = (void *)ctx->args[0];
+    if (cl_args_ptr)
+        bpf_probe_read_user(&flags, sizeof(flags), cl_args_ptr);
+
+    ev = bpf_ringbuf_reserve(&rb, sizeof(*ev), 0);
+    if (!ev)
+        return 0;
+
+    pid_tgid = bpf_get_current_pid_tgid();
+    ev->tgid = pid_tgid >> 32;
+    ev->uid = (u32)bpf_get_current_uid_gid();
+    ev->flags = flags;
+    ev->timestamp = bpf_ktime_get_ns();
+    ev->type = EVENT_CLONE_SYSCALL;
+    ev->variant = 1;
+    bpf_get_current_comm(&ev->comm, sizeof(ev->comm));
+
+    bpf_ringbuf_submit(ev, 0);
+    return 0;
+}
+
 SEC("tp/sched/sched_process_exit")
 int handle_exit(struct trace_event_raw_sched_process_template *ctx)
 {

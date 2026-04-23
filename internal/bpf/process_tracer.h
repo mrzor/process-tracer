@@ -13,6 +13,24 @@ enum event_type {
     EVENT_EXEC_CANDIDATE = 7,
     EVENT_FORK = 8,
     EVENT_ANCESTOR_TRACE = 9,
+    EVENT_CLONE_SYSCALL = 10,
+};
+
+// Raw clone()/clone3() syscall event. Emitted *before* sched_process_fork,
+// so userland can correlate by (tgid, timestamp) and see the flags the
+// caller requested. Used to investigate whether unusual clone flag
+// combinations (CLONE_PARENT, CLONE_NEWPID, CLONE_THREAD…) make the
+// subsequent fork's parent_pid diverge from what we'd expect. Only
+// emitted in ambient mode.
+struct clone_syscall_event {
+    __u32 tgid;            // caller's tgid (forking task)
+    __u32 uid;
+    __u64 flags;           // clone flags (for clone3, low 32 bits of clone_args->flags)
+    __u64 timestamp;
+    __u8 type;             // EVENT_CLONE_SYSCALL
+    __u8 variant;          // 0 = clone, 1 = clone3
+    __u8 _pad[6];
+    char comm[TASK_COMM_LEN];
 };
 
 // Full ancestor-chain dump emitted BEFORE EVENT_EXEC_CANDIDATE /

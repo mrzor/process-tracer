@@ -50,6 +50,31 @@ func NewProcessor(filter *FilterEngine, manager *SessionManager) *Processor {
 	}
 }
 
+// HandleCloneSyscall logs a clone/clone3 syscall with its flags decoded
+// into human-readable names. Correlate with sched_process_fork by
+// (tgid, timestamp) to see the flags that produced a given fork.
+// No-op unless debug-log is active — the tracepoints themselves are
+// ambient-mode-gated at the BPF level, but the log volume can still be
+// high; we skip the field-prep work when nobody's listening.
+func (p *Processor) HandleCloneSyscall(ev *bpf.CloneSyscallEvent) error {
+	if !debuglog.Enabled() {
+		return nil
+	}
+	variant := "clone"
+	if ev.Variant == 1 {
+		variant = "clone3"
+	}
+	debuglog.L.Info("clone_syscall",
+		zap.Uint32("tgid", ev.Tgid),
+		zap.Uint64("flags", ev.Flags),
+		zap.Strings("flag_names", decodeCloneFlags(ev.Flags)),
+		zap.String("variant", variant),
+		zap.Uint64("timestamp_ns", ev.Timestamp),
+		zap.String("comm", commString(ev.Comm[:])),
+	)
+	return nil
+}
+
 // HandleAncestorTrace logs BPF's 16-level real_parent walk when no
 // tracked ancestor was found. Correlate with the subsequent
 // exec_unclaimed / weld_fail event by (pid, timestamp). One event per

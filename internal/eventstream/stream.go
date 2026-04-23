@@ -107,6 +107,18 @@ func (s *Stream) processEvents(ctx context.Context) {
 				if err := s.handler.HandleAncestorTrace(&at); err != nil {
 					log.Printf("handling ancestor trace: %v", err)
 				}
+			case bpf.EVENT_CLONE_SYSCALL:
+				// clone/clone3 syscall entry — flags + caller. Userland logs
+				// a clone_syscall debug-log event. Correlate with
+				// sched_process_fork by (tgid, timestamp).
+				var cs bpf.CloneSyscallEvent
+				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &cs); err != nil {
+					log.Printf("parsing clone syscall event: %v", err)
+					continue
+				}
+				if err := s.handler.HandleCloneSyscall(&cs); err != nil {
+					log.Printf("handling clone syscall: %v", err)
+				}
 			default:
 				// Regular event
 				var event bpf.Event

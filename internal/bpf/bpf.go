@@ -22,7 +22,23 @@ const (
 	EVENT_EXEC_CANDIDATE = 7
 	EVENT_FORK           = 8
 	EVENT_ANCESTOR_TRACE = 9
+	EVENT_CLONE_SYSCALL  = 10
 )
+
+// CloneSyscallEvent matches struct clone_syscall_event in
+// process_tracer.h. Emitted for each clone/clone3 syscall entry in
+// ambient mode. Correlate with sched_process_fork by (Tgid, Timestamp)
+// to see the flags that produced a given fork.
+type CloneSyscallEvent struct {
+	Tgid      uint32
+	UID       uint32
+	Flags     uint64
+	Timestamp uint64
+	Type      uint8 // EVENT_CLONE_SYSCALL
+	Variant   uint8 // 0 = clone, 1 = clone3
+	_         [6]byte
+	Comm      [16]byte
+}
 
 // AncestorTraceMaxHops mirrors ANCESTOR_TRACE_MAX_HOPS in process_tracer.h.
 const AncestorTraceMaxHops = 16

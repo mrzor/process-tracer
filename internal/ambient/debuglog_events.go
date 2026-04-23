@@ -12,6 +12,44 @@ import (
 	"go.uber.org/zap"
 )
 
+// enrichExecUnclaimed returns zap fields that describe the exec payload
+// for a process that fell through every ambient-routing path. Caller
+// must have already pulled envData from pendingEnv; nil env is a no-op.
+// Values are bounded to prevent debug-log bloat on long argv / envp.
+func enrichExecUnclaimed(envData *envreassembler.ReassembledData) []zap.Field {
+	if envData == nil {
+		return nil
+	}
+	const maxArgs = 8
+	const maxEnvKeys = 32
+
+	args := envData.Args
+	if len(args) > maxArgs {
+		args = args[:maxArgs]
+	}
+	var exe string
+	if len(envData.Args) > 0 {
+		exe = envData.Args[0]
+	}
+
+	envKeys := make([]string, 0, maxEnvKeys)
+	for k := range envData.Env {
+		envKeys = append(envKeys, k)
+		if len(envKeys) >= maxEnvKeys {
+			break
+		}
+	}
+	sort.Strings(envKeys)
+
+	return []zap.Field{
+		zap.String("exe", exe),
+		zap.Strings("args", args),
+		zap.Int("argc_total", len(envData.Args)),
+		zap.Int("env_key_count", len(envData.Env)),
+		zap.Strings("env_keys", envKeys),
+	}
+}
+
 // commString extracts a null-terminated task comm from the fixed-size byte
 // array BPF events carry. Safe to call on empty/zero input (returns "").
 func commString(b []byte) string {

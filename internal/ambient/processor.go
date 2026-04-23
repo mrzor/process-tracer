@@ -395,13 +395,22 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 			// session, and no tracked ancestor — nothing claims this PID.
 			// Silent today; log so we can distinguish "sleep never joined
 			// because no one owned its parent" from other theories.
-			debuglog.L.Info("exec_unclaimed",
+			//
+			// envData was already pulled at the top of this function and
+			// would otherwise be discarded. Reuse it to enrich the log with
+			// the exe's argv[0] (cheapest proxy for full exe path) plus
+			// first-N args and env keys (names only — values could be PII).
+			fields := []zap.Field{
 				zap.Uint32("pid", pid),
 				zap.Uint32("ppid", ppid),
 				zap.Uint32("tracked_ancestor", trackedAncestor),
 				zap.Uint32("pid_ns_inum", pidNsInum),
 				zap.String("comm", execComm),
-			)
+			}
+			if envData != nil {
+				fields = append(fields, enrichExecUnclaimed(envData)...)
+			}
+			debuglog.L.Info("exec_unclaimed", fields...)
 			return nil
 		}
 	} else {

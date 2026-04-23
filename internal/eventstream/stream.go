@@ -61,76 +61,48 @@ func (s *Stream) processEvents(ctx context.Context) {
 				log.Printf("reading from ring buffer: %v", err)
 				continue
 			}
-
-			// First, peek at the event type to determine how to parse
-			// The Event struct has Type at offset 24 (after Pid, Ppid, Uid, Pad1, Timestamp)
-			if len(record.RawSample) < 25 {
-				log.Printf("record too short: %d bytes", len(record.RawSample))
-				continue
-			}
-
-			// Read just the type byte to determine event kind
-			eventType := record.RawSample[24]
-
-			switch eventType {
-			case bpf.EVENT_EXEC_ENV_CHUNK:
-				// This is an environment chunk event - parse differently
-				var envChunk bpf.EnvChunkEvent
-				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &envChunk); err != nil {
-					log.Printf("parsing env chunk event: %v", err)
-					continue
-				}
-
-				if err := s.handler.HandleEnvChunk(&envChunk); err != nil {
-					log.Printf("handling env chunk: %v", err)
-				}
-			case bpf.EVENT_ENV_VAR:
-				// This is a single environment variable event
-				var envVar bpf.EnvVarEvent
-				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &envVar); err != nil {
-					log.Printf("parsing env var event: %v", err)
-					continue
-				}
-
-				if err := s.handler.HandleEnvVar(&envVar); err != nil {
-					log.Printf("handling env var: %v", err)
-				}
-			case bpf.EVENT_ANCESTOR_TRACE:
-				// Full 16-level real_parent dump emitted when BPF's tracking
-				// walk couldn't find a tracked ancestor. Userland logs it as
-				// a debug-log event for post-mortem.
-				var at bpf.AncestorTraceEvent
-				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &at); err != nil {
-					log.Printf("parsing ancestor trace event: %v", err)
-					continue
-				}
-				if err := s.handler.HandleAncestorTrace(&at); err != nil {
-					log.Printf("handling ancestor trace: %v", err)
-				}
-			case bpf.EVENT_CLONE_SYSCALL:
-				// clone/clone3 syscall entry — flags + caller. Userland logs
-				// a clone_syscall debug-log event. Correlate with
-				// sched_process_fork by (tgid, timestamp).
-				var cs bpf.CloneSyscallEvent
-				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &cs); err != nil {
-					log.Printf("parsing clone syscall event: %v", err)
-					continue
-				}
-				if err := s.handler.HandleCloneSyscall(&cs); err != nil {
-					log.Printf("handling clone syscall: %v", err)
-				}
-			default:
-				// Regular event
-				var event bpf.Event
-				if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &event); err != nil {
-					log.Printf("parsing event: %v", err)
-					continue
-				}
-
-				if err := s.handler.HandleEvent(&event); err != nil {
-					log.Printf("handling event: %v", err)
-				}
-			}
+			s.dispatchRecord(record.RawSample)
 		}
+	}
+}
+
+// dispatchRecord peeks at the type byte of a raw ring-buffer sample and routes
+// it to the right parser + handler. The Event struct has Type at offset 24
+// (after Pid, Ppid, Uid, Pad1, Timestamp) and variant events share that layout.
+func (s *Stream) dispatchRecord(raw []byte) {
+	if len(raw) < 25 {
+		log.Printf("record too short: %d bytes", len(raw))
+		return
+	}
+	switch raw[24] {
+	case bpf.EVENT_EXEC_ENV_CHUNK:
+		var e bpf.EnvChunkEvent
+		decodeAndHandle(raw, &e, "env chunk", s.handler.HandleEnvChunk)
+	case bpf.EVENT_ENV_VAR:
+		var e bpf.EnvVarEvent
+		decodeAndHandle(raw, &e, "env var", s.handler.HandleEnvVar)
+	case bpf.EVENT_ANCESTOR_TRACE:
+		// Full 16-level real_parent dump emitted when BPF's tracking walk
+		// couldn't find a tracked ancestor. Logged as debug-log for post-mortem.
+		var e bpf.AncestorTraceEvent
+		decodeAndHandle(raw, &e, "ancestor trace", s.handler.HandleAncestorTrace)
+	case bpf.EVENT_CLONE_SYSCALL:
+		// clone/clone3 syscall entry — correlate with sched_process_fork by
+		// (tgid, timestamp).
+		var e bpf.CloneSyscallEvent
+		decodeAndHandle(raw, &e, "clone syscall", s.handler.HandleCloneSyscall)
+	default:
+		var e bpf.Event
+		decodeAndHandle(raw, &e, "event", s.handler.HandleEvent)
+	}
+}
+
+func decodeAndHandle[T any](raw []byte, out *T, label string, handle func(*T) error) {
+	if err := binary.Read(bytes.NewReader(raw), binary.LittleEndian, out); err != nil {
+		log.Printf("parsing %s event: %v", label, err)
+		return
+	}
+	if err := handle(out); err != nil {
+		log.Printf("handling %s: %v", label, err)
 	}
 }

@@ -121,31 +121,7 @@ func NewOTELFormatter(
 // case trace_id/parent_id expressions are evaluated against empty state.
 func (f *OTELFormatter) StartSession(ctx context.Context, metadata *procmeta.ProcessMetadata, startTime time.Time) {
 	customTraceID, customParentID, warnings, debugAttrs := f.resolveRootIDs(metadata)
-
-	// Build a parent SpanContext that carries the desired trace_id (and real
-	// parent span id if configured). When trace_id is configured but parent_id
-	// isn't, we synthesize a random SpanID for the virtual parent so that
-	// trace.NewSpanContext(...).IsValid() returns true — the OTEL SDK needs a
-	// non-zero SpanID to honor a parent context.
-	if customTraceID.IsValid() {
-		spanID := customParentID
-		if !spanID.IsValid() {
-			if _, err := rand.Read(spanID[:]); err != nil {
-				log.Printf("warning: rand.Read for virtual parent span ID failed: %v", err)
-			}
-		}
-		if spanID.IsValid() {
-			parentCtx := trace.NewSpanContext(trace.SpanContextConfig{
-				TraceID:    customTraceID,
-				SpanID:     spanID,
-				TraceFlags: trace.FlagsSampled,
-				Remote:     true,
-			})
-			if parentCtx.IsValid() {
-				ctx = trace.ContextWithSpanContext(ctx, parentCtx)
-			}
-		}
-	}
+	ctx = withCustomParent(ctx, customTraceID, customParentID)
 
 	_, span := f.tracer.Start(ctx, "process.tree",
 		trace.WithSpanKind(trace.SpanKindInternal),
@@ -155,19 +131,49 @@ func (f *OTELFormatter) StartSession(ctx context.Context, metadata *procmeta.Pro
 	f.sessionRootSpan = span
 	f.sessionRootCtx = span.SpanContext()
 
-	// Attach process identity attributes from the matched process metadata.
-	if metadata != nil && len(metadata.Args) > 0 {
-		span.SetAttributes(
-			attribute.String("process.command", filepath.Base(metadata.Args[0])),
-		)
-		if metadata.CmdlineFull != "" {
-			span.SetAttributes(
-				attribute.String("process.command_line", metadata.CmdlineFull),
-			)
+	f.attachSessionAttributes(span, metadata, warnings, debugAttrs)
+}
+
+// withCustomParent wraps ctx with a virtual parent SpanContext carrying the
+// configured trace_id (and parent_id if set). When trace_id is configured but
+// parent_id isn't, a random SpanID is synthesized so the SpanContext passes
+// IsValid() — the OTEL SDK requires a non-zero SpanID to honor a parent.
+func withCustomParent(ctx context.Context, customTraceID trace.TraceID, customParentID trace.SpanID) context.Context {
+	if !customTraceID.IsValid() {
+		return ctx
+	}
+	spanID := customParentID
+	if !spanID.IsValid() {
+		if _, err := rand.Read(spanID[:]); err != nil {
+			log.Printf("warning: rand.Read for virtual parent span ID failed: %v", err)
 		}
 	}
+	if !spanID.IsValid() {
+		return ctx
+	}
+	parentCtx := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    customTraceID,
+		SpanID:     spanID,
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	})
+	if !parentCtx.IsValid() {
+		return ctx
+	}
+	return trace.ContextWithSpanContext(ctx, parentCtx)
+}
 
-	// Attach root-only attributes: warnings, debug provenance, and custom attrs.
+func (f *OTELFormatter) attachSessionAttributes(
+	span trace.Span,
+	metadata *procmeta.ProcessMetadata,
+	warnings, debugAttrs []attribute.KeyValue,
+) {
+	if metadata != nil && len(metadata.Args) > 0 {
+		span.SetAttributes(attribute.String("process.command", filepath.Base(metadata.Args[0])))
+		if metadata.CmdlineFull != "" {
+			span.SetAttributes(attribute.String("process.command_line", metadata.CmdlineFull))
+		}
+	}
 	if len(warnings) > 0 {
 		span.SetAttributes(warnings...)
 	}

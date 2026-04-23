@@ -194,30 +194,38 @@ func randomTraceIDForEmptyExpr(expression string) (trace.TraceID, []attribute.Ke
 	return tid, warnings, nil
 }
 
-// validateTraceID checks whether resultStr is a valid 32-char hex trace ID.
-// If not, it hashes the string with SHA-256 and returns warnings.
-func validateTraceID(resultStr string) (trace.TraceID, []attribute.KeyValue, error) {
-	if len(resultStr) == 32 {
-		if traceID, err := trace.TraceIDFromHex(resultStr); err == nil {
-			return traceID, nil, nil
+// validateHexID parses resultStr as a hex-encoded ID of length hexLen. If the
+// parse fails, it SHA-256s the input, truncates to hashBytes, and returns that
+// as a deterministic fallback alongside diagnostic warnings.
+func validateHexID[T any](
+	resultStr string,
+	hexLen, hashBytes int,
+	parse func(string) (T, error),
+	attrPrefix, label string,
+) (T, []attribute.KeyValue, error) {
+	var zero T
+	if len(resultStr) == hexLen {
+		if v, err := parse(resultStr); err == nil {
+			return v, nil, nil
 		}
 	}
 
-	// Invalid trace ID — hash with SHA-256
 	hash := sha256.Sum256([]byte(resultStr))
-	hashedTraceIDStr := hex.EncodeToString(hash[:16])
-
-	traceID, err := trace.TraceIDFromHex(hashedTraceIDStr)
+	v, err := parse(hex.EncodeToString(hash[:hashBytes]))
 	if err != nil {
-		return trace.TraceID{}, nil, fmt.Errorf("failed to create trace ID from hash: %w", err)
+		return zero, nil, fmt.Errorf("failed to create %s from hash: %w", label, err)
 	}
 
 	warnings := []attribute.KeyValue{
-		attribute.String("_trace_id_expr_result", resultStr),
-		attribute.String("_trace_id_invalid_warning", fmt.Sprintf("Value %q is not a valid 32-char hex trace ID, used SHA-256 hash instead", resultStr)),
+		attribute.String("_"+attrPrefix+"_expr_result", resultStr),
+		attribute.String("_"+attrPrefix+"_invalid_warning",
+			fmt.Sprintf("Value %q is not a valid %d-char hex %s, used SHA-256 hash instead", resultStr, hexLen, label)),
 	}
+	return v, warnings, nil
+}
 
-	return traceID, warnings, nil
+func validateTraceID(resultStr string) (trace.TraceID, []attribute.KeyValue, error) {
+	return validateHexID(resultStr, 32, 16, trace.TraceIDFromHex, "trace_id", "trace ID")
 }
 
 // ParentIDEvaluator handles evaluation and validation of parent span ID values.
@@ -284,28 +292,6 @@ func (e *ParentIDEvaluator) EvaluateAndValidate(metadata *procmeta.ProcessMetada
 	return spanID, warnings, res, nil
 }
 
-// validateParentID checks whether resultStr is a valid 16-char hex span ID.
-// If not, it hashes the string with SHA-256 and returns warnings.
 func validateParentID(resultStr string) (trace.SpanID, []attribute.KeyValue, error) {
-	if len(resultStr) == 16 {
-		if spanID, err := trace.SpanIDFromHex(resultStr); err == nil {
-			return spanID, nil, nil
-		}
-	}
-
-	// Invalid span ID — hash with SHA-256
-	hash := sha256.Sum256([]byte(resultStr))
-	hashedSpanIDStr := hex.EncodeToString(hash[:8])
-
-	spanID, err := trace.SpanIDFromHex(hashedSpanIDStr)
-	if err != nil {
-		return trace.SpanID{}, nil, fmt.Errorf("failed to create span ID from hash: %w", err)
-	}
-
-	warnings := []attribute.KeyValue{
-		attribute.String("_parent_id_expr_result", resultStr),
-		attribute.String("_parent_id_invalid_warning", fmt.Sprintf("Value %q is not a valid 16-char hex span ID, used SHA-256 hash instead", resultStr)),
-	}
-
-	return spanID, warnings, nil
+	return validateHexID(resultStr, 16, 8, trace.SpanIDFromHex, "parent_id", "span ID")
 }

@@ -26,6 +26,7 @@ import (
 func daemonCommand() *cli.Command {
 	var configPath string
 	var debugLogPath string
+	var debugLogCoverage int
 
 	return &cli.Command{
 		Name:  "daemon",
@@ -45,14 +46,20 @@ func daemonCommand() *cli.Command {
 				Destination: &debugLogPath,
 				Sources:     cli.EnvVars("PROCESS_TRACER_DEBUG_LOG"),
 			},
+			&cli.IntFlag{
+				Name:        "debug-log-coverage",
+				Usage:       "Sample every Nth exec that no rule matches and log an exec_unmatched debug event (0 = off). Useful for finding binaries the rule should also match.",
+				Destination: &debugLogCoverage,
+				Sources:     cli.EnvVars("PROCESS_TRACER_DEBUG_LOG_COVERAGE"),
+			},
 		},
 		Action: func(_ context.Context, _ *cli.Command) error {
-			return runDaemon(configPath, debugLogPath)
+			return runDaemon(configPath, debugLogPath, debugLogCoverage)
 		},
 	}
 }
 
-func runDaemon(configPath, debugLogPath string) error {
+func runDaemon(configPath, debugLogPath string, debugLogCoverage int) error {
 	cfg, err := config.LoadAmbientConfig(configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -96,6 +103,7 @@ func runDaemon(configPath, debugLogPath string) error {
 		loader, tracer, converter, resolver, metadataManager, cfg.Limits,
 	)
 	processor := ambient.NewProcessor(filter, manager)
+	processor.SetDebugCoverageSampling(debugLogCoverage)
 
 	stream := eventstream.New(rd, processor)
 	ctx, cancel := context.WithCancel(context.Background())

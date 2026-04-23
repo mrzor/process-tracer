@@ -35,7 +35,8 @@ echo "[guest] Starting process-tracer daemon..."
 DBG_LOG=/tmp/process-tracer-debug.log
 PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS=5000 /tmp/process-tracer daemon \
     -c /tmp/ambient-runc-starved.yaml \
-    --debug-log="$DBG_LOG" &
+    --debug-log="$DBG_LOG" \
+    --debug-log-coverage=10 &
 DAEMON_PID=$!
 
 # Safety net: if this script exits for any reason (error, hang timeout,

@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mrzor/process-tracer/internal/bpf"
@@ -27,6 +28,21 @@ type Processor struct {
 	pendingExit          map[uint32]*pendingExitInfo
 	chunkReassembler     *envreassembler.ChunkReassembler
 	streamingReassembler *envreassembler.StreamingReassembler
+
+	// Debug-log coverage sampler: when >0, log every Nth exec that no
+	// rule matched (exec_unmatched event) so operators can see which
+	// binaries exist but aren't being captured. coverageCounter wraps
+	// around to avoid overflow and is a plain counter — we don't need
+	// strict determinism, just a steady 1/N rate.
+	coverageRate    int
+	coverageCounter uint64
+}
+
+// SetDebugCoverageSampling configures the exec_unmatched sampling rate.
+// rate=0 disables, rate=N logs every Nth unmatched exec. Safe to call
+// before Start(); not safe to change while the daemon is running.
+func (p *Processor) SetDebugCoverageSampling(rate int) {
+	p.coverageRate = rate
 }
 
 type pendingExitInfo struct {
@@ -207,7 +223,14 @@ func (p *Processor) handleExecCandidate(event *bpf.Event) error {
 	// Match against rules
 	rule := p.filter.Match(comm, procData.IsContainerInit == 1)
 	if rule == nil {
-		// No match - clean up any buffered env data
+		// No match — optionally sample the exec for coverage
+		// diagnostics before discarding the buffered env.
+		if p.coverageRate > 0 && debuglog.Enabled() {
+			n := atomic.AddUint64(&p.coverageCounter, 1)
+			if n%uint64(p.coverageRate) == 0 {
+				p.emitExecUnmatched(event.Pid, event.Ppid, event.UID, procData, comm)
+			}
+		}
 		p.cleanupPending(pid)
 		return nil
 	}
@@ -475,6 +498,30 @@ func (p *Processor) runProcessExec(session *TraceSession, pid, ppid, uid uint32,
 	return err
 }
 
+// emitExecUnmatched logs a sampled exec_unmatched event when an
+// EXEC_CANDIDATE doesn't match any rule. Reuses buffered env data (if
+// any) from pendingEnv to enrich the log the same way exec_unclaimed
+// does — exe/argv/env_keys. Called under coverageRate sampling.
+func (p *Processor) emitExecUnmatched(pid, ppid, uid uint32, procData *bpf.ProcessEventData, comm string) {
+	p.mu.Lock()
+	envData := p.pendingEnv[pid]
+	p.mu.Unlock()
+
+	fields := []zap.Field{
+		zap.Uint32("pid", pid),
+		zap.Uint32("ppid", ppid),
+		zap.Uint32("uid", uid),
+		zap.Uint32("pid_ns_inum", procData.PidNsInum),
+		zap.Bool("is_container_init", procData.IsContainerInit == 1),
+		zap.Uint32("ns_level", procData.NsLevel),
+		zap.String("comm", strings.TrimRight(comm, "\x00")),
+	}
+	if envData != nil {
+		fields = append(fields, enrichExecUnclaimed(envData)...)
+	}
+	debuglog.L.Info("exec_unmatched", fields...)
+}
+
 // logTraceIDMismatchIfAny emits a trace_id_mismatch event when envData (the
 // joining pid's own env) resolves the session's rule trace_id expression to
 // a value different from the session's resolved trace-id. Diagnostic-only;
@@ -526,6 +573,17 @@ func (p *Processor) handleExit(event *bpf.Event) error {
 		}
 		p.mu.Unlock()
 		return nil
+	}
+
+	if debuglog.Enabled() {
+		debuglog.L.Info("pid_exit",
+			append(sessionLogFields(session),
+				zap.Uint32("pid", pid),
+				zap.Uint32("ppid", event.Ppid),
+				zap.Uint32("exit_code", procData.ExitCode),
+				zap.String("comm", commString(procData.Comm[:])),
+				zap.Bool("session_completed", completed),
+			)...)
 	}
 
 	err := p.processExit(session, pid, event.Ppid, event.UID, procData.ExitCode, event.Timestamp, procData.Comm[:])

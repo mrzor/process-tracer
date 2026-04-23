@@ -23,7 +23,13 @@ rules:
       command: "runc"
     context_starved: true
     skip_empty_values: true
-    trace_id: 'expr:env["CI_PIPELINE_ID"] + "-" + env["CI_JOB_ID"]'
+    # Single-var trace_id: the materialisation gate (manager_starved.go's
+    # materializationReady) asks "does this descendant's env resolve the
+    # trace-id expression to non-empty?" A concat like
+    # `env["CI_PIPELINE_ID"] + "-" + env["CI_JOB_ID"]` always evaluates to at
+    # least "-" and would flip the gate on every descendant regardless of env
+    # content. Use a single env lookup so the gate has a clean signal.
+    trace_id: 'expr:env["CI_JOB_ID"]'
     attributes:
       service.name: 'expr:env["CI_PROJECT_NAME"]'
       ci.job.id: 'expr:env["CI_JOB_ID"]'

@@ -262,7 +262,8 @@ qemu-system-x86_64 \
     -drive file="$STAGING/seed.iso",format=raw \
     -netdev user,id=net0 \
     -device virtio-net-pci,netdev=net0 \
-    -serial file:"$STAGING/serial.log" &
+    -serial file:"$STAGING/serial.log" \
+    -serial file:"$STAGING/debug.log" &
 QEMU_PID=$!
 
 # --- Wait for VM to finish ---
@@ -301,6 +302,19 @@ unset OTELCOL_PID
 kill "$HTTP_PID" 2>/dev/null || true
 wait "$HTTP_PID" 2>/dev/null || true
 unset HTTP_PID
+
+# --- Daemon debug-log status ---
+# The second QEMU serial port is wired directly to $STAGING/debug.log,
+# so no post-extraction is needed — the file already contains whatever the
+# guest cats to /dev/ttyS1. Using a dedicated port keeps the debug log
+# clean of getty-on-ttyS0 escape sequences and concurrent-writer garble.
+if [[ "$MODE" == "runc-starved" ]]; then
+    if [[ -s "$STAGING/debug.log" ]]; then
+        ok "host/debug" "debug.log captured ($(wc -l <"$STAGING/debug.log") events)"
+    else
+        warn "host/debug" "debug.log empty — did the daemon write any events?"
+    fi
+fi
 
 # --- Verify traces ---
 

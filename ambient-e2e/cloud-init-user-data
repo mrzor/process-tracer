@@ -1,5 +1,10 @@
 #cloud-config
 runcmd:
+  # Stop the serial getty so its escape sequences and login prompt don't
+  # interleave with our guest output on ttyS0. This was swallowing late
+  # script output on longer test runs (e.g. the runc-starved variant C's
+  # sleep chain). --now stops any already-running instance.
+  - systemctl disable --now serial-getty@ttyS0.service
   - curl -sf http://10.0.2.2:9999/guest-run.sh -o /tmp/guest-run.sh
   - chmod +x /tmp/guest-run.sh
   - [bash, -c, "/tmp/guest-run.sh > /dev/ttyS0 2>&1; echo 1 > /proc/sys/kernel/sysrq; echo o > /proc/sysrq-trigger"]

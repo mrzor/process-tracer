@@ -207,19 +207,93 @@ class TestContextStarvedMaterialization:
             f"materialized into separate traces."
         )
 
+    def test_variant_d_detached_sleeps_visible(self, all_spans):
+        """Variant D: materialise, then detach a subshell (outer-inner-
+        background-exit pattern) that forks sleeps. The subshell gets
+        reparented to the container's init, breaking BPF's real_parent
+        chain back to the materialised session's tracked root.
+
+        This is the intended production repro. On v0.8.4 it should fail:
+        the 4 sleeps' exec events have tracked_ancestor=0 and never
+        attach to the `detached` tree. If this test passes, either the
+        reparenting didn't happen as expected, or BPF's fork tracking
+        is more robust than the production evidence suggests — in which
+        case production's failure mode is somewhere else entirely."""
+        trees = _trees_by_service(all_spans, "detached")
+        assert len(trees) == 1, (
+            f"expected exactly one process.tree with service.name=detached, "
+            f"got {len(trees)}"
+        )
+        tree = trees[0]
+        descendants = _descendants_of(all_spans, tree)
+        commands = [s.attrs.get("process.command") for s in descendants
+                    if s.name == "process.exec"]
+        sleep_count = sum(1 for c in commands if c == "sleep")
+        assert sleep_count == 4, (
+            f"variant D: expected 4 detached sleep execs in detached tree, "
+            f"got {sleep_count}. commands={commands}"
+        )
+
+    def test_variant_c_materialised_and_sleeps_visible(self, all_spans):
+        """Variant C: long-lived sh materialises via /bin/id, then spawns
+        four /bin/sleep children. The materialised tree must include
+        /bin/id AND all four sleeps.
+
+        Intended as a regression anchor for the production bug (v0.8.4)
+        where post-materialisation forks from a starved-buffered shell
+        were invisible to BPF — a 60s GitLab pipeline of four sleeps
+        produced zero sleep spans. The simple runc-exec container shape
+        here doesn't fully reproduce that bug (production's GitLab runner
+        chain is deeper and crosses more PID-namespace boundaries), but
+        this test catches the basic "post-materialisation fork tracking
+        works at all" invariant. A future variant with a multi-hop
+        container setup should pin the production shape."""
+        trees = _trees_by_service(all_spans, "longlived")
+        assert len(trees) == 1, (
+            f"expected exactly one process.tree with service.name=longlived, "
+            f"got {len(trees)}"
+        )
+        tree = trees[0]
+        assert tree.attrs.get("ci.pipeline.id") == "111", (
+            f"ci.pipeline.id mismatch on longlived tree: "
+            f"{tree.attrs.get('ci.pipeline.id')!r}"
+        )
+        assert tree.attrs.get("ci.job.id") == "222", (
+            f"ci.job.id mismatch on longlived tree: "
+            f"{tree.attrs.get('ci.job.id')!r}"
+        )
+
+        descendants = _descendants_of(all_spans, tree)
+        commands = [s.attrs.get("process.command") for s in descendants
+                    if s.name == "process.exec"]
+
+        # Materialisation trigger must be visible (same shape as variant B).
+        assert "id" in commands, (
+            f"variant C: /bin/id trigger not in longlived tree: {commands}"
+        )
+
+        # All four sleeps must attach to the same tree. Count rather than
+        # membership — losing even one means the fork-gap is partially
+        # present and the bug isn't fully fixed.
+        sleep_count = sum(1 for c in commands if c == "sleep")
+        assert sleep_count == 4, (
+            f"variant C: expected 4 sleep execs in longlived tree, "
+            f"got {sleep_count}. commands={commands}"
+        )
+
     def test_container_init_subtree_never_materializes(self, all_spans):
         """`runc run` also matches `command: runc` but its subtree (sh,
         sleep) carries no CI_* env, so the rule's Expr never resolves.
         That pending session must never become an OTEL process.tree.
 
         We assert this by checking that no process.tree exists with a
-        service.name outside the two expected values. The context-starved
-        `runc run` session either drops at session_timeout or is simply
-        never materialized — both outcomes are OK; what matters is the
-        absence of a spurious tree."""
+        service.name outside the three expected variants. The
+        context-starved `runc run` session either drops at session_timeout
+        or is simply never materialized — both outcomes are OK; what
+        matters is the absence of a spurious tree."""
         trees = [s for s in all_spans if s.name == "process.tree"]
         unexpected = [t for t in trees
-                      if t.attrs.get("service.name") not in ("demo", "runtime")]
+                      if t.attrs.get("service.name") not in ("demo", "runtime", "longlived", "detached")]
         assert not unexpected, (
             f"unexpected process.tree(s) materialized: "
             f"{[(t.attrs.get('service.name'), t.attrs.get('ci.job.id')) for t in unexpected]}"

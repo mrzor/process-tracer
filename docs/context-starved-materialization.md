@@ -228,6 +228,23 @@ this code path (see also `debuglog` package for the full catalog):
   `MaxConcurrentSessions` counts pending-starved entries, so the usual
   limit applies.
 
+## End-to-end regression tests
+
+`./ambient-e2e/run-test.sh --mode=runc-starved` exercises three variants:
+
+- **A** — `runc exec -e CI_*=... /bin/id`. Immediate-child descendant
+  carries CI env. Tests "materialise on first context-ful exec."
+- **B** — `runc exec ... sh -c 'export CI_*; /bin/id'`. Starved sh,
+  grandchild `id` materialises via inherited env. Tests "buffer → replay."
+- **C** — `runc exec ... sh -c 'export CI_*; /bin/id; sleep×4'`.
+  Long-lived sh materialises and then continues forking sleep children.
+  Regression test for the "post-materialisation forks are lost" bug seen
+  in production (all four sleeps must show up in the tree).
+
+The same run emits the daemon's `--debug-log` JSON-lines to
+`staging/debug.log` via a serial-console bridge, so failures can be
+diagnosed with the same `jq` queries used in production captures.
+
 ## References in code
 
 - `internal/ambient/manager_starved.go` — pending lifecycle, gate,

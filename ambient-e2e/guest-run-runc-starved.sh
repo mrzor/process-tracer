@@ -32,7 +32,10 @@ curl -sf "$HOST/ambient-runc-starved.yaml" -o /tmp/ambient-runc-starved.yaml
 chmod +x /tmp/process-tracer
 
 echo "[guest] Starting process-tracer daemon..."
-PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS=5000 /tmp/process-tracer daemon -c /tmp/ambient-runc-starved.yaml &
+DBG_LOG=/tmp/process-tracer-debug.log
+PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS=5000 /tmp/process-tracer daemon \
+    -c /tmp/ambient-runc-starved.yaml \
+    --debug-log="$DBG_LOG" &
 DAEMON_PID=$!
 
 # Safety net: if this script exits for any reason (error, hang timeout,
@@ -143,6 +146,44 @@ runc exec "$CTR_ID" /bin/sh -c \
     'export CI_PIPELINE_ID=99 CI_JOB_ID=100 CI_PROJECT_NAME=runtime; /bin/id' \
     || echo "[guest] variant B runc exec failed"
 
+sleep 0.5
+
+# --- Variant D: detached subshell — sleeps reparented to container init ---
+# Probes the production failure mode: a descendant chain whose real_parent
+# chain no longer reaches any tracked PID. The outer sh materialises, then
+# spawns a subshell that *itself* backgrounds a grandchild loop and exits.
+# The grandchild is orphaned → reparented to the container's init (PID 1
+# inside the container) which is NOT in any materialised session. BPF's
+# sched_process_fork ancestor walk from a subsequent sleep will follow
+# real_parent → init → give up within 8 hops, and emit tracked_ancestor=0.
+# That's exactly the shape we saw in production for the GitLab bash step
+# script's sleep chain.
+#
+# The outer runc exec `wait`s only on the first-level child (which exits
+# quickly), so runc returns fast. We then `sleep 8` after this variant to
+# hold the container alive long enough for the detached grandchild's
+# sleeps to complete — otherwise the container-kill would cut them off.
+echo "[guest] Variant D: runc exec ... (detached subshell, sleeps reparented)"
+runc exec "$CTR_ID" /bin/sh -c 'export CI_PIPELINE_ID=333 CI_JOB_ID=444 CI_PROJECT_NAME=detached; /bin/id; ( ( for i in 1 2 3 4; do /bin/sleep 1; done ) & )' \
+    || echo "[guest] variant D runc exec failed"
+
+# Hold the container alive so the detached grandchild can finish its sleeps.
+sleep 8
+
+# --- Variant C: long-lived sh materialises, then forks a sleep chain ------
+# sh is starved at its exec (no CI_* in execve envp). It exports CI_* then
+# execs /bin/id (materialisation trigger — id's envp inherits the exports).
+# sh then continues, forking four child processes that exec /bin/sleep.
+# In a healthy world, the materialised session captures /bin/id and all
+# four sleeps. In the buggy world (v0.8.4), /bin/id attaches but
+# post-materialisation forks from sh are silent — BPF stops emitting fork
+# events for the sh/sleep subtree once the materialise race closes. This
+# variant is the regression shape pulled from a production GitLab runner
+# pipeline that executed `sleep 10; sleep 20; sleep 10; sleep 20`.
+echo "[guest] Variant C: runc exec ... sh -c 'export CI_*=longlived; id; sleep×4'"
+runc exec "$CTR_ID" /bin/sh -c 'export CI_PIPELINE_ID=111 CI_JOB_ID=222 CI_PROJECT_NAME=longlived; /bin/id; for i in 1 2 3 4; do /bin/sleep 1; done' \
+    || echo "[guest] variant C runc exec failed"
+
 # Let BPF events propagate
 sleep 1
 
@@ -159,6 +200,22 @@ echo "[guest] Stopping daemon (PID $DAEMON_PID)..."
 kill -TERM "$DAEMON_PID" 2>/dev/null || true
 wait "$DAEMON_PID" 2>/dev/null || true
 echo "[guest] Daemon stopped"
+
+# --- Emit debug-log to dedicated serial port ------------------------------
+# QEMU's second serial (-serial file:.../debug.log) is wired to /dev/ttyS1
+# inside the VM. We cat the daemon's structured diagnostic log there so
+# the host captures it directly, without contention with the main ttyS0
+# serial (which has getty and escape sequences interleaved). Moved ahead
+# of container cleanup because `runc kill` / `runc delete` can hang for
+# seconds, and cloud-init's post-runcmd poweroff races the script tail.
+# Daemon stop above already drained the zap sink (Sync in cleanup()), so
+# the file is complete when we cat it here.
+if [[ -r "$DBG_LOG" ]]; then
+    cat "$DBG_LOG" > /dev/ttyS1 || true
+    echo "[guest] Debug log ($(wc -l <"$DBG_LOG") events) piped to /dev/ttyS1"
+else
+    echo "[guest] Debug log not produced at $DBG_LOG"
+fi
 
 # --- Cleanup container ----------------------------------------------------
 echo "[guest] Killing container..."

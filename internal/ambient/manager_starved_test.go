@@ -44,6 +44,7 @@ func TestContextStarved_EmptyResolveStaysPending(t *testing.T) {
 	session, buffered := mgr.HandleStarvedDescendantExec(
 		101, 100, 1000, 1,
 		starvedMeta(map[string]string{"PATH": "/usr/bin"}), // no CI_JOB_ID
+		"",
 	)
 	assert.Nil(t, session, "no materialization without context-ful env")
 	assert.True(t, buffered, "descendant must be buffered")
@@ -63,6 +64,7 @@ func TestContextStarved_NonEmptyResolveMaterializes(t *testing.T) {
 	session, buffered := mgr.HandleStarvedDescendantExec(
 		101, 100, 1000, 1,
 		starvedMeta(map[string]string{"CI_JOB_ID": "42"}),
+		"",
 	)
 	require.NotNil(t, session, "context-ful descendant must materialize the session")
 	assert.False(t, buffered)
@@ -89,15 +91,16 @@ func TestContextStarved_BufferedDescendantsReplayedInOrder(t *testing.T) {
 	require.NoError(t, mgr.CreatePendingStarved(100, rule, starvedMeta(nil, "runc")))
 
 	// Two starved descendants (no CI_JOB_ID).
-	_, buffered := mgr.HandleStarvedDescendantExec(101, 100, 1000, 1, starvedMeta(map[string]string{"PATH": "/usr/bin"}))
+	_, buffered := mgr.HandleStarvedDescendantExec(101, 100, 1000, 1, starvedMeta(map[string]string{"PATH": "/usr/bin"}), "")
 	assert.True(t, buffered)
-	_, buffered = mgr.HandleStarvedDescendantExec(102, 101, 1000, 2, starvedMeta(map[string]string{"PATH": "/usr/bin"}))
+	_, buffered = mgr.HandleStarvedDescendantExec(102, 101, 1000, 2, starvedMeta(map[string]string{"PATH": "/usr/bin"}), "")
 	assert.True(t, buffered)
 
 	// Third descendant resolves → materialize.
 	session, _ := mgr.HandleStarvedDescendantExec(
 		103, 102, 1000, 3,
 		starvedMeta(map[string]string{"CI_JOB_ID": "42"}),
+		"",
 	)
 	require.NotNil(t, session)
 
@@ -122,6 +125,7 @@ func TestContextStarved_DeepChainViaFork(t *testing.T) {
 	_, buffered := mgr.HandleStarvedDescendantExec(
 		101, 100, 1000, 1,
 		starvedMeta(map[string]string{"PATH": "/usr/bin"}),
+		"",
 	)
 	assert.True(t, buffered)
 
@@ -135,6 +139,7 @@ func TestContextStarved_DeepChainViaFork(t *testing.T) {
 	session, _ := mgr.HandleStarvedDescendantExec(
 		103, 102, 1000, 2,
 		starvedMeta(map[string]string{"CI_JOB_ID": "99"}),
+		"",
 	)
 	require.NotNil(t, session, "grandchild through fork-only intermediary must materialize")
 	for _, pid := range []uint32{100, 101, 103} {
@@ -161,6 +166,7 @@ func TestContextStarved_ExecOnUnknownParentFallsThrough(t *testing.T) {
 	session, buffered := mgr.HandleStarvedDescendantExec(
 		201, 200, 1000, 1,
 		starvedMeta(map[string]string{"CI_JOB_ID": "1"}),
+		"",
 	)
 	assert.Nil(t, session)
 	assert.False(t, buffered)
@@ -177,7 +183,7 @@ func TestContextStarved_StaleTimeoutDropsPending(t *testing.T) {
 
 	require.NoError(t, mgr.CreatePendingStarved(100, rule, starvedMeta(nil, "runc")))
 	// Buffer a starved descendant so we can assert its mapping disappears.
-	_, buffered := mgr.HandleStarvedDescendantExec(101, 100, 1000, 1, starvedMeta(map[string]string{"PATH": "/usr/bin"}))
+	_, buffered := mgr.HandleStarvedDescendantExec(101, 100, 1000, 1, starvedMeta(map[string]string{"PATH": "/usr/bin"}), "")
 	require.True(t, buffered)
 
 	time.Sleep(50 * time.Millisecond)
@@ -194,7 +200,7 @@ func TestContextStarved_DropPendingStarvedExplicit(t *testing.T) {
 	rule := starvedRule()
 
 	require.NoError(t, mgr.CreatePendingStarved(100, rule, starvedMeta(nil, "runc")))
-	_, _ = mgr.HandleStarvedDescendantExec(101, 100, 1000, 1, starvedMeta(map[string]string{}))
+	_, _ = mgr.HandleStarvedDescendantExec(101, 100, 1000, 1, starvedMeta(map[string]string{}), "")
 
 	mgr.DropPendingStarved(100)
 	assert.Equal(t, uint32(0), mgr.PendingStarvedRootByPid(100))
@@ -243,6 +249,7 @@ func TestContextStarved_LiteralAttributeDoesNotDefeatGate(t *testing.T) {
 	session, buffered := mgr.HandleStarvedDescendantExec(
 		101, 100, 1000, 1,
 		starvedMeta(map[string]string{}),
+		"",
 	)
 	assert.Nil(t, session, "literal-only rule must not materialize on first descendant")
 	assert.True(t, buffered, "descendant should buffer while the gate waits")
@@ -271,6 +278,7 @@ func TestContextStarved_TraceIDExprGatesMaterialization(t *testing.T) {
 	session, buffered := mgr.HandleStarvedDescendantExec(
 		101, 100, 1000, 1,
 		starvedMeta(map[string]string{"CI_JOB_ID": "42"}),
+		"",
 	)
 	assert.Nil(t, session, "CI_PIPELINE_ID absent — must not materialize")
 	assert.True(t, buffered)
@@ -279,6 +287,7 @@ func TestContextStarved_TraceIDExprGatesMaterialization(t *testing.T) {
 	session, _ = mgr.HandleStarvedDescendantExec(
 		102, 101, 1000, 2,
 		starvedMeta(map[string]string{"CI_JOB_ID": "42", "CI_PIPELINE_ID": "7"}),
+		"",
 	)
 	require.NotNil(t, session, "CI_PIPELINE_ID present — must materialize")
 }

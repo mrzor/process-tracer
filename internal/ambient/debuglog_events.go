@@ -12,6 +12,19 @@ import (
 	"go.uber.org/zap"
 )
 
+// commString extracts a null-terminated task comm from the fixed-size byte
+// array BPF events carry. Safe to call on empty/zero input (returns "").
+func commString(b []byte) string {
+	if len(b) == 0 || b[0] == 0 {
+		return ""
+	}
+	n := 0
+	for n < len(b) && b[n] != 0 {
+		n++
+	}
+	return string(b[:n])
+}
+
 // envKeysWithPrefix returns a sorted list of env keys matching the given
 // prefix. Diagnostic-only: caps at maxKeys to bound log size, values are
 // never included (PII / volume).

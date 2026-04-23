@@ -180,19 +180,38 @@ this code path (see also `debuglog` package for the full catalog):
   `injector_env_key_count`, `injector_attr_nonempty` (which literals /
   exprs already resolve against the injector itself).
 - `starved_buffer` — a descendant arrived but failed the gate and was
-  buffered. Includes `attr_resolved` (all attributes, including empties) so
-  you can see *why* the gate held.
+  buffered. Includes `comm`, `attr_resolved` (all attributes, including
+  empties), `env_key_count` — so you can see *why* the gate held and what
+  process was doing the failing exec.
 - `starved_env_probe` — one event per materialization, at the moment the
-  gate flipped. Includes `trace_id_expr_source`,
+  gate flipped. Includes `trigger_comm`, `trace_id_expr_source`,
   `trace_id_resolved_value_len`, `env_key_count`, `env_keys_prefix_ci`,
   `attr_nonempty`. This is the single most useful event for answering "did
   the trace_id actually resolve to something useful?"
 - `starved_materialize` — session successfully materialized;
   `buffered_descendants` tells you how many got replayed.
-- `descendant_join` with `via: "starved_replay"` — one per replayed
-  descendant in the materialize loop.
+- `descendant_join` — regular exec/fork attaching to a live session.
+  Fields include `comm` and `via` (`"exec"`, `"fork"`, or
+  `"starved_replay"`). Grep by `comm` to confirm a specific process
+  actually joined a session.
+- `ancestor_weld` — exec/fork whose immediate parent isn't in a session,
+  but BPF's `TrackedAncestor` points at one. Includes `comm`.
+- `weld_fail` — same setup as `ancestor_weld` but attaching to the
+  ancestor's session failed (limits hit). Includes `comm`.
+- `exec_unclaimed` — exec event that no session / pending-starved /
+  tracked-ancestor claimed. Previously a silent drop. Includes `comm` and
+  `tracked_ancestor` (0 when absent). Use to rule out "the process never
+  reached any session" vs "it joined but the span silently failed."
+- `session_exec_error` — `HandleProcessExec` returned an error after the
+  PID was attached. Separates "joined but span emit failed" from the
+  other theories.
 - `starved_drop` — pending session timed out without ever flipping the
   gate. `buffered_descendants` and `pending_age_ms` quantify the loss.
+- `session_dump` / `pending_starved_dump` — emitted once per active
+  session at daemon shutdown. `session_dump` includes `pid_count` and
+  `pids_by_cmd` (a histogram of `argv[0]` across the session's PIDs) so
+  you can answer "did process X ever belong to any session?" from the
+  log alone.
 
 ## Known limits and edge cases
 

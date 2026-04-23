@@ -326,6 +326,11 @@ func (m *SessionManager) CloseAllSessions() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Dump each active session's pid inventory before closing. Lets a post-
+	// mortem answer "did comm=X ever join session Y?" from the debug log
+	// alone, which today requires guessing from descendant_join fragments.
+	m.dumpActiveSessionsLocked()
+
 	now := time.Now()
 	closed := 0
 	for id, session := range m.sessions {
@@ -342,4 +347,41 @@ func (m *SessionManager) CloseAllSessions() int {
 	m.pidToSession = map[uint32]*TraceSession{}
 	m.totalPIDs = 0
 	return closed
+}
+
+// dumpActiveSessionsLocked emits a session_dump debug event per active
+// session, describing the pid inventory grouped by observed argv[0]. Must
+// be called with m.mu held. Pending-starved sessions get a separate
+// pending_starved_dump event. Zero-cost no-op when debuglog is disabled.
+func (m *SessionManager) dumpActiveSessionsLocked() {
+	if !debuglog.Enabled() {
+		return
+	}
+	for _, session := range m.sessions {
+		pids := session.PIDList()
+		byCmd := map[string]int{}
+		unknown := 0
+		for _, pid := range pids {
+			meta := m.metadataManager.Get(pid)
+			if meta == nil || len(meta.Args) == 0 {
+				unknown++
+				continue
+			}
+			byCmd[meta.Args[0]]++
+		}
+		debuglog.L.Info("session_dump",
+			append(sessionLogFields(session),
+				zap.Int("pid_count", len(pids)),
+				zap.Int("pids_unknown_cmd", unknown),
+				zap.Any("pids_by_cmd", byCmd),
+			)...)
+	}
+	for rootPid, pending := range m.pendingStarved {
+		debuglog.L.Info("pending_starved_dump",
+			zap.String("rule", pending.rule.Name),
+			zap.Uint32("root_pid", rootPid),
+			zap.Int("buffered_descendants", len(pending.descendants)),
+			zap.Int64("pending_age_ms", time.Since(pending.createdAt).Milliseconds()),
+		)
+	}
 }

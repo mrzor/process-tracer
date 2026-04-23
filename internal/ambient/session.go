@@ -61,6 +61,18 @@ func (s *TraceSession) PIDs() int {
 	return len(s.pids)
 }
 
+// PIDList returns a snapshot of every PID currently in this session. Safe
+// to call concurrently — returns a copy.
+func (s *TraceSession) PIDList() []uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]uint32, 0, len(s.pids))
+	for pid := range s.pids {
+		out = append(out, pid)
+	}
+	return out
+}
+
 // HasPID returns whether the given PID belongs to this session.
 func (s *TraceSession) HasPID(pid uint32) bool {
 	s.mu.Lock()

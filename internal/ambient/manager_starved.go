@@ -168,7 +168,7 @@ func (m *SessionManager) PendingStarvedRootByPid(pid uint32) uint32 {
 //     invoke session.HandleProcessExec for this descendant.
 //   - (nil, true): buffered; the caller should treat the exec as handled.
 //   - (nil, false): no pending starved ancestor; fall through to normal routing.
-func (m *SessionManager) HandleStarvedDescendantExec(pid, ppid, uid uint32, timestamp uint64, metadata *procmeta.ProcessMetadata) (*TraceSession, bool) {
+func (m *SessionManager) HandleStarvedDescendantExec(pid, ppid, uid uint32, timestamp uint64, metadata *procmeta.ProcessMetadata, comm string) (*TraceSession, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -184,7 +184,7 @@ func (m *SessionManager) HandleStarvedDescendantExec(pid, ppid, uid uint32, time
 	}
 
 	if pending.materializationReady(metadata) {
-		session, err := m.materializeStarvedLocked(pending, metadata)
+		session, err := m.materializeStarvedLocked(pending, metadata, comm)
 		if err != nil {
 			log.Printf("pending-starved %s: materialization failed: %v", pending.rule.Name, err)
 			m.dropPendingStarvedLocked(pending)
@@ -217,6 +217,7 @@ func (m *SessionManager) HandleStarvedDescendantExec(pid, ppid, uid uint32, time
 			zap.Uint32("root_pid", rootPid),
 			zap.Uint32("pid", pid),
 			zap.Uint32("ppid", ppid),
+			zap.String("comm", comm),
 			zap.Int("buffered_count", len(pending.descendants)),
 			zap.Int("env_key_count", envCount),
 			zap.Any("attr_resolved", probeAttributes(pending.probeAttr, metadata, false)),
@@ -251,7 +252,7 @@ func (m *SessionManager) HandleStarvedDescendantFork(childPid, parentPid uint32)
 // evaluation (merged with the root's args so process.command reflects the
 // injector). Buffered descendants are replayed onto the new session in
 // execve order. Must be called with m.mu held.
-func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession, descMeta *procmeta.ProcessMetadata) (*TraceSession, error) {
+func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession, descMeta *procmeta.ProcessMetadata, triggerComm string) (*TraceSession, error) {
 	if len(m.sessions) >= m.limits.MaxConcurrentSessions {
 		return nil, fmt.Errorf("max concurrent sessions (%d) reached", m.limits.MaxConcurrentSessions)
 	}
@@ -280,6 +281,7 @@ func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession
 		debuglog.L.Info("starved_env_probe",
 			zap.String("rule", pending.rule.Name),
 			zap.Uint32("root_pid", pending.rootPid),
+			zap.String("trigger_comm", triggerComm),
 			zap.String("trace_id_expr_source", pending.rule.TraceID),
 			zap.Int("trace_id_resolved_value_len", resolvedLen),
 			zap.Int("env_key_count", envCount),

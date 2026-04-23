@@ -221,6 +221,11 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 		return nil
 	}
 
+	var forkComm string
+	if procData := event.ProcessData(); procData != nil {
+		forkComm = commString(procData.Comm[:])
+	}
+
 	session := p.manager.AddDescendant(childPid, parentPid)
 	if session != nil {
 		debuglog.L.Info("descendant_join",
@@ -228,6 +233,7 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 				zap.Uint32("pid", childPid),
 				zap.Uint32("ppid", parentPid),
 				zap.String("via", "fork"),
+				zap.String("comm", forkComm),
 			)...)
 	}
 	if session == nil {
@@ -246,23 +252,16 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 						zap.Uint32("ppid", parentPid),
 						zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
 						zap.String("via", "fork"),
+						zap.String("comm", forkComm),
 					)...)
 			} else {
-				var comm string
-				if procData.Comm[0] != 0 {
-					n := 0
-					for n < len(procData.Comm) && procData.Comm[n] != 0 {
-						n++
-					}
-					comm = string(procData.Comm[:n])
-				}
 				debuglog.L.Info("weld_fail",
 					zap.Uint32("pid", childPid),
 					zap.Uint32("ppid", parentPid),
 					zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
 					zap.Bool("parent_joined", parentSession != nil),
 					zap.String("via", "fork"),
-					zap.String("comm", comm),
+					zap.String("comm", forkComm),
 				)
 			}
 		}
@@ -274,6 +273,13 @@ func (p *Processor) handleFork(event *bpf.Event) error {
 func (p *Processor) handleExec(event *bpf.Event) error {
 	pid := event.Pid
 	ppid := event.Ppid
+
+	var execComm string
+	var trackedAncestor uint32
+	if procData := event.ProcessData(); procData != nil {
+		execComm = commString(procData.Comm[:])
+		trackedAncestor = procData.TrackedAncestor
+	}
 
 	// Pull pending env/metadata up front — both the starved path and the
 	// normal path need it.
@@ -303,8 +309,8 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 	// to a pending context-starved session, either this exec triggers
 	// materialization (we still emit its process.exec span) or it gets
 	// buffered for later replay.
-	if session, buffered := p.manager.HandleStarvedDescendantExec(pid, ppid, event.UID, event.Timestamp, metadata); session != nil {
-		return session.HandleProcessExec(pid, ppid, event.UID, event.Timestamp, metadata)
+	if session, buffered := p.manager.HandleStarvedDescendantExec(pid, ppid, event.UID, event.Timestamp, metadata, execComm); session != nil {
+		return p.runProcessExec(session, pid, ppid, event.UID, event.Timestamp, execComm, metadata)
 	} else if buffered {
 		return nil
 	}
@@ -315,9 +321,9 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 	if session == nil {
 		// Parent not in any session — try the tracked ancestor from BPF's
 		// ancestor walk (covers fork-without-exec intermediaries).
-		if procData := event.ProcessData(); procData != nil && procData.TrackedAncestor != 0 {
+		if trackedAncestor != 0 {
 			// First add the immediate parent (fork-only intermediate) to the session
-			parentSession := p.manager.AddDescendant(ppid, procData.TrackedAncestor)
+			parentSession := p.manager.AddDescendant(ppid, trackedAncestor)
 			// Then add this process
 			session = p.manager.AddDescendant(pid, ppid)
 
@@ -327,29 +333,32 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 					append(sessionLogFields(session),
 						zap.Uint32("pid", pid),
 						zap.Uint32("ppid", ppid),
-						zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+						zap.Uint32("tracked_ancestor", trackedAncestor),
 						zap.String("via", "exec"),
+						zap.String("comm", execComm),
 					)...)
 			} else {
-				var comm string
-				if procData.Comm[0] != 0 {
-					n := 0
-					for n < len(procData.Comm) && procData.Comm[n] != 0 {
-						n++
-					}
-					comm = string(procData.Comm[:n])
-				}
 				debuglog.L.Info("weld_fail",
 					zap.Uint32("pid", pid),
 					zap.Uint32("ppid", ppid),
-					zap.Uint32("tracked_ancestor", procData.TrackedAncestor),
+					zap.Uint32("tracked_ancestor", trackedAncestor),
 					zap.Bool("parent_joined", parentSession != nil),
 					zap.String("via", "exec"),
-					zap.String("comm", comm),
+					zap.String("comm", execComm),
 				)
 			}
 		}
 		if session == nil {
+			// Exec event with no pending-starved pending, no parent in any
+			// session, and no tracked ancestor — nothing claims this PID.
+			// Silent today; log so we can distinguish "sleep never joined
+			// because no one owned its parent" from other theories.
+			debuglog.L.Info("exec_unclaimed",
+				zap.Uint32("pid", pid),
+				zap.Uint32("ppid", ppid),
+				zap.Uint32("tracked_ancestor", trackedAncestor),
+				zap.String("comm", execComm),
+			)
 			return nil
 		}
 	} else {
@@ -357,6 +366,8 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 			append(sessionLogFields(session),
 				zap.Uint32("pid", pid),
 				zap.Uint32("ppid", ppid),
+				zap.String("via", "exec"),
+				zap.String("comm", execComm),
 			)...)
 	}
 
@@ -365,7 +376,25 @@ func (p *Processor) handleExec(event *bpf.Event) error {
 	// session's resolved value. A mismatch is a probable bug instance.
 	p.logTraceIDMismatchIfAny(session, pid, ppid, welded, envData)
 
-	return session.HandleProcessExec(pid, ppid, event.UID, event.Timestamp, metadata)
+	return p.runProcessExec(session, pid, ppid, event.UID, event.Timestamp, execComm, metadata)
+}
+
+// runProcessExec dispatches to session.HandleProcessExec and structures any
+// error into a session_exec_error debug event — previously errors only went
+// to the main log, which isn't jq-grepable. Returns the original error so
+// existing callers' error semantics are unchanged.
+func (p *Processor) runProcessExec(session *TraceSession, pid, ppid, uid uint32, timestamp uint64, comm string, metadata *procmeta.ProcessMetadata) error {
+	err := session.HandleProcessExec(pid, ppid, uid, timestamp, metadata)
+	if err != nil {
+		debuglog.L.Info("session_exec_error",
+			append(sessionLogFields(session),
+				zap.Uint32("pid", pid),
+				zap.Uint32("ppid", ppid),
+				zap.String("comm", comm),
+				zap.String("error", err.Error()),
+			)...)
+	}
+	return err
 }
 
 // logTraceIDMismatchIfAny emits a trace_id_mismatch event when envData (the

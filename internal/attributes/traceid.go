@@ -1,6 +1,7 @@
 package attributes
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -22,11 +23,12 @@ const (
 
 // Validation values.
 const (
-	ValidationNone    = ""        // unconfigured
-	ValidationValid   = "valid"   // parsed as proper hex ID
-	ValidationHashed  = "hashed"  // invalid hex, SHA-256 fallback used (both trace ID and parent ID)
-	ValidationInvalid = "invalid" // deprecated: parent ID now uses ValidationHashed like trace ID
-	ValidationError   = "error"   // expression evaluation failed
+	ValidationNone          = ""               // unconfigured
+	ValidationValid         = "valid"          // parsed as proper hex ID
+	ValidationHashed        = "hashed"         // invalid hex, SHA-256 fallback used (both trace ID and parent ID)
+	ValidationInvalid       = "invalid"        // deprecated: parent ID now uses ValidationHashed like trace ID
+	ValidationError         = "error"          // expression evaluation failed
+	ValidationEmptyFallback = "empty_fallback" // expr evaluated to empty string; random ID assigned to avoid sha256("") collision
 )
 
 // TraceIDResolution records how a trace ID was derived, for debugging.
@@ -144,6 +146,23 @@ func (e *TraceIDEvaluator) EvaluateAndValidate(metadata *procmeta.ProcessMetadat
 	}
 	res.ResolvedValue = resultStr
 
+	// Empty-expr safety net: if the expression ran but produced "", hashing
+	// it yields a well-known collision (sha256("")) that would collapse every
+	// such session into one poisoned trace. Instead, generate a random trace
+	// ID so each session lands in its own orphan trace and is greppable via
+	// the warning attributes we attach. Literal empty strings fall through to
+	// the old hashing behavior — that's a direct rule-author decision.
+	if resultStr == "" && e.program != nil {
+		tid, warnings, emptyErr := randomTraceIDForEmptyExpr(e.expression)
+		if emptyErr != nil {
+			res.Validation = ValidationError
+			res.Error = emptyErr.Error()
+			return trace.TraceID{}, nil, res, emptyErr
+		}
+		res.Validation = ValidationEmptyFallback
+		return tid, warnings, res, nil
+	}
+
 	traceID, warnings, err := validateTraceID(resultStr)
 	if err != nil {
 		res.Validation = ValidationError
@@ -156,6 +175,23 @@ func (e *TraceIDEvaluator) EvaluateAndValidate(metadata *procmeta.ProcessMetadat
 		res.Validation = ValidationValid
 	}
 	return traceID, warnings, res, nil
+}
+
+// randomTraceIDForEmptyExpr generates a random 16-byte trace ID for the case
+// where an expr-based trace_id resolved to the empty string. Returns warning
+// attributes that identify the offending expression so operators can find the
+// misconfigured rule from any span in the resulting (orphaned) trace.
+func randomTraceIDForEmptyExpr(expression string) (trace.TraceID, []attribute.KeyValue, error) {
+	var tid trace.TraceID
+	if _, err := rand.Read(tid[:]); err != nil {
+		return trace.TraceID{}, nil, fmt.Errorf("randomizing fallback trace ID: %w", err)
+	}
+	warnings := []attribute.KeyValue{
+		attribute.String("_trace_id_empty_expr_warning",
+			fmt.Sprintf("expression %q resolved to empty string; random trace_id assigned to avoid sha256(\"\") collision", expression)),
+		attribute.String("_trace_id_source_expr", expression),
+	}
+	return tid, warnings, nil
 }
 
 // validateTraceID checks whether resultStr is a valid 32-char hex trace ID.

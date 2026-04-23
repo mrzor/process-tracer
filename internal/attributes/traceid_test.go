@@ -80,6 +80,100 @@ func TestTraceIDEvaluator_LiteralInvalidHex(t *testing.T) {
 	}
 }
 
+func TestTraceIDEvaluator_LiteralPipelineID(t *testing.T) {
+	// Numeric pipeline ID (e.g. GitLab CI_PIPELINE_ID) → SHA-256 hashed to a
+	// deterministic 32-char hex trace ID. The expected hash is the first 16
+	// bytes of sha256("2775260"), hex-encoded.
+	const pipelineID = "2775260"
+	const expectedHex = "a65f7926c88f4ab44591d739c425750e"
+
+	evaluator, err := NewTraceIDEvaluator(pipelineID)
+	if err != nil {
+		t.Fatalf("NewTraceIDEvaluator() error = %v", err)
+	}
+
+	traceID, warnings, res, err := evaluator.EvaluateAndValidate(nil)
+	if err != nil {
+		t.Fatalf("EvaluateAndValidate() error = %v", err)
+	}
+
+	expected, err := trace.TraceIDFromHex(expectedHex)
+	if err != nil {
+		t.Fatalf("TraceIDFromHex() error = %v", err)
+	}
+	if traceID != expected {
+		t.Errorf("traceID = %s, want %s", traceID, expected)
+	}
+
+	if len(warnings) != 2 {
+		t.Errorf("Expected 2 warnings for hashed literal, got %d", len(warnings))
+	}
+	if res.Source != SourceLiteral {
+		t.Errorf("Source = %q, want %q", res.Source, SourceLiteral)
+	}
+	if res.Validation != ValidationHashed {
+		t.Errorf("Validation = %q, want %q", res.Validation, ValidationHashed)
+	}
+	if res.ResolvedValue != pipelineID {
+		t.Errorf("ResolvedValue = %q, want %q", res.ResolvedValue, pipelineID)
+	}
+}
+
+func TestTraceIDEvaluator_ExprResolvesEmptyFallsBackToRandom(t *testing.T) {
+	// When an expr trace_id resolves to "", hashing it yields sha256("") and
+	// every session collapses onto one poison trace. The fallback path must
+	// instead assign a random trace_id, flag the resolution state, and
+	// produce warnings pointing at the offending expression.
+	evaluator, err := NewTraceIDEvaluator(`expr:env["MISSING_VAR"]`)
+	if err != nil {
+		t.Fatalf("NewTraceIDEvaluator() error = %v", err)
+	}
+
+	meta := &procmeta.ProcessMetadata{Environ: map[string]string{"PATH": "/usr/bin"}}
+
+	tid1, warnings1, res1, err := evaluator.EvaluateAndValidate(meta)
+	if err != nil {
+		t.Fatalf("EvaluateAndValidate() error = %v", err)
+	}
+	if res1.Validation != ValidationEmptyFallback {
+		t.Errorf("Validation = %q, want %q", res1.Validation, ValidationEmptyFallback)
+	}
+	if res1.ResolvedValue != "" {
+		t.Errorf("ResolvedValue = %q, want empty", res1.ResolvedValue)
+	}
+	if !tid1.IsValid() {
+		t.Errorf("expected random trace ID to be valid, got zero")
+	}
+	// Poison-hash prefix sha256("")[:32] = "e3b0c44298fc1c149afbf4c8996fb924"
+	if tid1.String() == "e3b0c44298fc1c149afbf4c8996fb924" {
+		t.Errorf("fallback produced the sha256(\"\") collision trace ID")
+	}
+
+	foundWarning := false
+	foundSource := false
+	for _, w := range warnings1 {
+		if string(w.Key) == "_trace_id_empty_expr_warning" {
+			foundWarning = true
+		}
+		if string(w.Key) == "_trace_id_source_expr" && w.Value.AsString() == `env["MISSING_VAR"]` {
+			foundSource = true
+		}
+	}
+	if !foundWarning || !foundSource {
+		t.Errorf("expected warning + source attributes, got %v", warnings1)
+	}
+
+	// Distinct calls must produce distinct random IDs (uniqueness across
+	// sessions is the whole point of the fallback).
+	tid2, _, _, err := evaluator.EvaluateAndValidate(meta)
+	if err != nil {
+		t.Fatalf("second EvaluateAndValidate() error = %v", err)
+	}
+	if tid1 == tid2 {
+		t.Errorf("two fallback calls produced the same trace ID: %s", tid1)
+	}
+}
+
 func TestTraceIDEvaluator_Empty(t *testing.T) {
 	evaluator, err := NewTraceIDEvaluator("")
 	if err != nil {

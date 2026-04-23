@@ -44,36 +44,33 @@ type pendingStarvedSession struct {
 	probeParent *attributes.ParentIDEvaluator
 }
 
-// anyNonEmpty returns true iff at least one of the rule's custom attribute
-// Expr expressions evaluates to a non-empty string against the given
-// descendant's metadata. This is the "context-ful" signal: the rule itself
-// — by naming `env["CI_JOB_ID"]` or similar in its attributes — defines what
-// context-ful means.
+// materializationReady reports whether this descendant's metadata carries
+// enough signal to promote the pending session into a real one. The gate
+// follows the rule author's declared correlation key:
 //
-// trace_id and parent_id expressions are deliberately *not* consulted here.
-// They often contain literal glue (e.g. `env["CI_PIPELINE_ID"] + "-" +
-// env["CI_JOB_ID"]` collapses to `"-"` when both vars are unset), which
-// would produce false positives on every descendant of every match.
-// Attributes like `service.name` or `ci.job.id` are the semantic signal;
-// trace_id/parent_id are technical identifiers derived from the same vars
-// and add no discriminating power beyond what attributes already cover.
+//  1. If rule.TraceID is expr-configured, that expression MUST resolve
+//     non-empty. The trace is keyed on it; creating the session before it
+//     resolves risks collapsing unrelated pipelines onto the same trace
+//     (e.g. every empty-expr session hashing to sha256("")).
+//  2. If rule.TraceID is a literal or unconfigured, the trace_id doesn't
+//     depend on env — fall back to the attribute signal: at least one
+//     expr-backed attribute must resolve non-empty. Literal attributes are
+//     ignored because they resolve non-empty unconditionally and cannot
+//     distinguish "env ready" from "first exec."
 //
-// Literal values (without the "expr:" prefix) always resolve non-empty when
-// set; a context_starved rule whose only attribute is a literal therefore
-// materializes on the first descendant exec it sees — still the rule
-// author's explicit choice.
-func (p *pendingStarvedSession) anyNonEmpty(meta *procmeta.ProcessMetadata) bool {
+// A rule where both (1) is absent and (2) has no expr-backed attributes has
+// a dead gate — warned about at load time in CreatePendingStarved.
+func (p *pendingStarvedSession) materializationReady(meta *procmeta.ProcessMetadata) bool {
 	if meta == nil {
 		return false
 	}
-	if attrs, err := p.probeAttr.EvaluateCustomAttributes(meta); err == nil {
-		for _, a := range attrs {
-			if a.Value.AsString() != "" {
-				return true
-			}
+	if p.rule.TraceID != "" {
+		if _, isExpr := attributes.ParseExprPrefix(p.rule.TraceID); isExpr {
+			_, _, res, err := p.probeTrace.EvaluateAndValidate(meta)
+			return err == nil && res.ResolvedValue != ""
 		}
 	}
-	return false
+	return p.probeAttr.AnyExprAttributeNonEmpty(meta)
 }
 
 // CreatePendingStarved registers a pending context-starved session for the
@@ -103,6 +100,18 @@ func (m *SessionManager) CreatePendingStarved(rootPid uint32, rule *config.Ambie
 	probeParent, err := attributes.NewParentIDEvaluator(rule.ParentID)
 	if err != nil {
 		return fmt.Errorf("compiling parent_id probe for rule %q: %w", rule.Name, err)
+	}
+
+	// Dead-gate warning: if neither the trace_id nor any attribute is
+	// expr-backed, materializationReady can never wait on env — it would
+	// either fire immediately or never. Either way, context_starved is
+	// providing no value; rule author likely misconfigured.
+	traceIDIsExpr := false
+	if rule.TraceID != "" {
+		_, traceIDIsExpr = attributes.ParseExprPrefix(rule.TraceID)
+	}
+	if !traceIDIsExpr && !probeAttr.HasExprAttributes() {
+		log.Printf("warning: context_starved rule %q has no expr-based trace_id or attributes; materialization gate is inert — consider removing context_starved or adding an expr-based signal", rule.Name)
 	}
 
 	pending := &pendingStarvedSession{
@@ -174,7 +183,7 @@ func (m *SessionManager) HandleStarvedDescendantExec(pid, ppid, uid uint32, time
 		return nil, false
 	}
 
-	if pending.anyNonEmpty(metadata) {
+	if pending.materializationReady(metadata) {
 		session, err := m.materializeStarvedLocked(pending, metadata)
 		if err != nil {
 			log.Printf("pending-starved %s: materialization failed: %v", pending.rule.Name, err)
@@ -390,4 +399,3 @@ func mergeMetadataForMaterialization(root, desc *procmeta.ProcessMetadata) *proc
 	}
 	return merged
 }
-

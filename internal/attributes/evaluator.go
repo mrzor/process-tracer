@@ -73,6 +73,48 @@ func NewEvaluator(customAttrs []config.CustomAttribute, skipEmptyValues bool) (*
 	}, nil
 }
 
+// HasExprAttributes reports whether any attribute was declared with the
+// "expr:" prefix. A rule with no expr-backed attributes cannot use attribute
+// resolution as a readiness signal — each literal attribute resolves
+// non-empty unconditionally.
+func (e *Evaluator) HasExprAttributes() bool {
+	for _, p := range e.compiledExprs {
+		if p != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// AnyExprAttributeNonEmpty returns true iff at least one attribute declared
+// with the "expr:" prefix evaluates to a non-empty string against metadata.
+// Literal attributes are ignored — they resolve non-empty unconditionally
+// and so carry no signal about whether env is context-ful yet.
+func (e *Evaluator) AnyExprAttributeNonEmpty(metadata *procmeta.ProcessMetadata) bool {
+	if metadata == nil || len(e.customAttrs) == 0 {
+		return false
+	}
+	env := map[string]interface{}{
+		"env":     metadata.Environ,
+		"args":    metadata.Args,
+		"cmdline": metadata.CmdlineFull,
+	}
+	for i := range e.customAttrs {
+		program := e.compiledExprs[i]
+		if program == nil {
+			continue
+		}
+		output, err := expr.Run(program, env)
+		if err != nil {
+			continue
+		}
+		if fmt.Sprint(output) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // EvaluateCustomAttributes evaluates custom attribute values for a given process metadata.
 // Literal attributes are returned as-is. Expression attributes are evaluated at runtime.
 func (e *Evaluator) EvaluateCustomAttributes(metadata *procmeta.ProcessMetadata) ([]attribute.KeyValue, error) {

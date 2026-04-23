@@ -221,10 +221,12 @@ func TestContextStarved_PendingCountsAgainstSessionLimit(t *testing.T) {
 	assert.Contains(t, err.Error(), "max concurrent sessions")
 }
 
-func TestContextStarved_LiteralAttributeMaterializesOnFirstDescendant(t *testing.T) {
-	// A context-starved rule whose only attribute is a literal (no expr:
-	// prefix) resolves non-empty unconditionally, so the first descendant
-	// exec materializes regardless of env content.
+func TestContextStarved_LiteralAttributeDoesNotDefeatGate(t *testing.T) {
+	// A context-starved rule whose only attribute is a literal cannot use
+	// attribute resolution as a readiness signal — literals resolve non-empty
+	// unconditionally and carry no env-readiness information. With no
+	// expr-based trace_id either, the gate is inert and each descendant
+	// buffers until timeout (load-time warning already flags the misconfig).
 	tracker := newMockTracker()
 	mgr := newTestManager(t, tracker, defaultLimits())
 	rule := &config.AmbientRule{
@@ -232,15 +234,51 @@ func TestContextStarved_LiteralAttributeMaterializesOnFirstDescendant(t *testing
 		Match:          config.AmbientMatch{Command: "runc"},
 		ContextStarved: true,
 		Attributes: map[string]string{
-			"service.name": "always-on", // literal → always non-empty
+			"service.name": "always-on", // literal → ignored by gate
 		},
 	}
 
 	require.NoError(t, mgr.CreatePendingStarved(100, rule, starvedMeta(nil, "runc")))
 
-	session, _ := mgr.HandleStarvedDescendantExec(
+	session, buffered := mgr.HandleStarvedDescendantExec(
 		101, 100, 1000, 1,
 		starvedMeta(map[string]string{}),
 	)
-	require.NotNil(t, session, "literal attribute makes every descendant context-ful")
+	assert.Nil(t, session, "literal-only rule must not materialize on first descendant")
+	assert.True(t, buffered, "descendant should buffer while the gate waits")
+}
+
+func TestContextStarved_TraceIDExprGatesMaterialization(t *testing.T) {
+	// With an expr-based trace_id, materialization must wait for that
+	// expression to resolve non-empty — even if an expr-based attribute is
+	// already resolving. The trace_id is the correlation key; creating a
+	// session before it resolves risks collision on sha256("").
+	tracker := newMockTracker()
+	mgr := newTestManager(t, tracker, defaultLimits())
+	rule := &config.AmbientRule{
+		Name:           "ci-traceid-starved",
+		Match:          config.AmbientMatch{Command: "runc"},
+		ContextStarved: true,
+		TraceID:        `expr:env["CI_PIPELINE_ID"]`,
+		Attributes: map[string]string{
+			"ci.job.id": `expr:env["CI_JOB_ID"]`,
+		},
+	}
+
+	require.NoError(t, mgr.CreatePendingStarved(100, rule, starvedMeta(nil, "runc")))
+
+	// CI_JOB_ID is set but CI_PIPELINE_ID is not → gate must hold.
+	session, buffered := mgr.HandleStarvedDescendantExec(
+		101, 100, 1000, 1,
+		starvedMeta(map[string]string{"CI_JOB_ID": "42"}),
+	)
+	assert.Nil(t, session, "CI_PIPELINE_ID absent — must not materialize")
+	assert.True(t, buffered)
+
+	// Now CI_PIPELINE_ID shows up → materialize.
+	session, _ = mgr.HandleStarvedDescendantExec(
+		102, 101, 1000, 2,
+		starvedMeta(map[string]string{"CI_JOB_ID": "42", "CI_PIPELINE_ID": "7"}),
+	)
+	require.NotNil(t, session, "CI_PIPELINE_ID present — must materialize")
 }

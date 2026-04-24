@@ -234,6 +234,57 @@ class TestContextStarvedMaterialization:
             f"got {sleep_count}. commands={commands}"
         )
 
+    def test_variant_e_fork_only_subshell_leaked(self, all_spans):
+        """Variant E: the hypothesised repro for the production "where's
+        my sleep?" bug. The outer sh is exec'd (so it lands in
+        pending.descendants). It forks a subshell that never exec's
+        anything new — that subshell pid is registered only in
+        pendingStarvedByPid (via HandleStarvedDescendantFork) and is
+        NOT in pending.descendants. The outer sh then triggers
+        materialisation via /bin/id with CI_* in env.
+
+        At materialisation, pending.descendants is replayed into the
+        session but the subshell pid is silently dropped because it was
+        only in pendingStarvedByPid. It stays in BPF tracked_pids (no
+        UntrackPID call) but is invisible to Go. Its subsequent sleep
+        children hit EVENT_EXEC with tracked_ancestor=0 (BPF sees the
+        subshell as a directly-tracked parent) and Go's handleExec
+        silently drops them as exec_unclaimed.
+
+        Pre-materialisation sleeps forked by the subshell DO get
+        buffered normally (via HandleStarvedDescendantExec's buffer
+        branch) and show up in the tree. Post-materialisation sleeps
+        from the same subshell are lost. The split depends on scheduling
+        timing (how many sleeps the subshell manages to fork before
+        /bin/id's env-stream + exec reaches materialisation); empirically
+        it's 2-pre / 3-post. The invariant is that the total must be 5.
+        Post-fix: all 5 in the tree. Today: fewer than 5 (the missing
+        ones appear as exec_unclaimed with tracked_ancestor=0 in the
+        debug log)."""
+        trees = _trees_by_service(all_spans, "leaked")
+        assert len(trees) == 1, (
+            f"expected exactly one process.tree with service.name=leaked, "
+            f"got {len(trees)}"
+        )
+        tree = trees[0]
+        assert tree.attrs.get("ci.pipeline.id") == "555"
+        assert tree.attrs.get("ci.job.id") == "666"
+
+        descendants = _descendants_of(all_spans, tree)
+        commands = [s.attrs.get("process.command") for s in descendants
+                    if s.name == "process.exec"]
+
+        sleep_count = sum(1 for c in commands if c == "sleep")
+        assert sleep_count == 5, (
+            f"variant E (fork-only leak): expected 5 sleep execs in leaked "
+            f"tree (1 pre-materialisation sleep from the subshell that was "
+            f"buffered normally + 4 post-materialisation sleeps from the "
+            f"orphaned subshell). got {sleep_count}. Missing post-mat sleeps "
+            f"indicate materializeStarvedLocked drops fork-only entries from "
+            f"pendingStarvedByPid without adding them to pidToSession or "
+            f"untracking them in BPF. commands={commands}"
+        )
+
     def test_variant_c_materialised_and_sleeps_visible(self, all_spans):
         """Variant C: long-lived sh materialises via /bin/id, then spawns
         four /bin/sleep children. The materialised tree must include
@@ -293,7 +344,7 @@ class TestContextStarvedMaterialization:
         matters is the absence of a spurious tree."""
         trees = [s for s in all_spans if s.name == "process.tree"]
         unexpected = [t for t in trees
-                      if t.attrs.get("service.name") not in ("demo", "runtime", "longlived", "detached")]
+                      if t.attrs.get("service.name") not in ("demo", "runtime", "longlived", "detached", "leaked")]
         assert not unexpected, (
             f"unexpected process.tree(s) materialized: "
             f"{[(t.attrs.get('service.name'), t.attrs.get('ci.job.id')) for t in unexpected]}"

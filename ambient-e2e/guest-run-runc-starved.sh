@@ -185,6 +185,35 @@ echo "[guest] Variant C: runc exec ... sh -c 'export CI_*=longlived; id; sleep×
 runc exec "$CTR_ID" /bin/sh -c 'export CI_PIPELINE_ID=111 CI_JOB_ID=222 CI_PROJECT_NAME=longlived; /bin/id; for i in 1 2 3 4; do /bin/sleep 1; done' \
     || echo "[guest] variant C runc exec failed"
 
+sleep 0.5
+
+# --- Variant E: fork-only subshell leaked at materialisation --------------
+# Hypothesised repro for the production "where's my sleep?" bug. A
+# pending-starved rule matches runc. The outer sh is exec'd (so it is
+# recorded in pending.descendants). The outer sh forks a subshell via
+# `(...)&` — the subshell pid is registered in pendingStarvedByPid via
+# HandleStarvedDescendantFork, but it never exec's a new binary itself
+# (stays as the ash interpreter), so it is NOT in pending.descendants.
+#
+# The outer sh then triggers materialisation via `/bin/id` with CI_* in
+# envp. In materializeStarvedLocked, `pending.descendants` is replayed
+# into the session (outer sh + the pre-mat /bin/sleep grandchild get
+# added to pidToSession), but the subshell pid is silently dropped —
+# it was only in pendingStarvedByPid, never in descendants.
+#
+# Result: the subshell remains in BPF tracked_pids (never UntrackPID'd)
+# but Go has no record of it. Its post-materialisation sleep children
+# forked from the subshell hit EVENT_EXEC with tracked_ancestor=0 (BPF
+# sees immediate parent as tracked), but Go's handleExec can't route
+# them → exec_unclaimed. The first sleep (before materialisation) gets
+# buffered and replayed normally; the remaining four are lost.
+#
+# Expect after fix: 5 sleeps attached to the `leaked` tree.
+# Expect today:    1 sleep attached to the `leaked` tree.
+echo "[guest] Variant E: fork-only subshell; orphan sleep chain after materialisation"
+runc exec "$CTR_ID" /bin/sh -c '( /bin/sleep 2; /bin/sleep 1; /bin/sleep 1; /bin/sleep 1; /bin/sleep 1 ) & export CI_PIPELINE_ID=555 CI_JOB_ID=666 CI_PROJECT_NAME=leaked; /bin/id; wait' \
+    || echo "[guest] variant E runc exec failed"
+
 # Let BPF events propagate
 sleep 1
 

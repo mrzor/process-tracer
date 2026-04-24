@@ -14,12 +14,23 @@ import (
 
 // bufferedDescendantExec holds the exec event data for a descendant we stashed
 // while its pending context-starved session waits for a context-ful arrival.
+// If the descendant dies *during* the pending window, HandleStarvedDescendantExit
+// records its exit here so materializeStarvedLocked can replay both the exec
+// and the exit — producing a full process.exec span and immediately removing
+// the pid from session.pids, rather than leaving a pre-dead pid in place that
+// the session would wait on forever.
 type bufferedDescendantExec struct {
 	pid       uint32
 	ppid      uint32
 	uid       uint32
 	timestamp uint64
 	metadata  *procmeta.ProcessMetadata
+
+	// Exit info; set iff the descendant exited during the pending window.
+	exited   bool
+	exitCode uint32
+	exitTime uint64
+	exitComm []byte
 }
 
 // pendingStarvedSession is the transient state held between a context-starved
@@ -226,6 +237,58 @@ func (m *SessionManager) HandleStarvedDescendantExec(pid, ppid, uid uint32, time
 	return nil, true
 }
 
+// HandleStarvedDescendantExit records that a pending-starved descendant has
+// died before materialization. Returns true if the pid was in pending-starved
+// state (and the exit was therefore handled), false otherwise — the caller
+// falls through to its default "exit of an untracked pid" behavior in that
+// case.
+//
+// For exec-buffered descendants the exit info is stored alongside the
+// buffered exec so materialization can replay both and close the span
+// cleanly. For fork-only descendants (no exec data to replay) the pending
+// entry is simply dropped: there is no span to emit and keeping the record
+// around would only contribute a dead pid to session.pids at materialization.
+// In either case the pid is removed from pendingStarvedByPid so future
+// forks/execs on the same pid (if recycled) don't route here.
+func (m *SessionManager) HandleStarvedDescendantExit(pid uint32, exitCode uint32, exitTime uint64, comm []byte) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rootPid, ok := m.pendingStarvedByPid[pid]
+	if !ok {
+		return false
+	}
+	pending, ok := m.pendingStarved[rootPid]
+	if !ok {
+		// Inconsistent state — drop the by-pid entry and report handled.
+		delete(m.pendingStarvedByPid, pid)
+		return true
+	}
+
+	// Annotate every matching descendants entry as exited. A single pid
+	// can have multiple entries in descendants when it exec-replaces —
+	// e.g. runc's "exe" re-exec into "memfd:runc_clon" — each exec is
+	// a distinct buffered entry. All of them need the exit marker so
+	// the replay loop finalizes the session-side bookkeeping for this
+	// pid regardless of which descendants index it matched.
+	exitCommCopy := append([]byte(nil), comm...)
+	for i := range pending.descendants {
+		if pending.descendants[i].pid == pid {
+			pending.descendants[i].exited = true
+			pending.descendants[i].exitCode = exitCode
+			pending.descendants[i].exitTime = exitTime
+			pending.descendants[i].exitComm = exitCommCopy
+		}
+	}
+
+	// Always drop from pendingStarvedByPid: either we annotated one or
+	// more descendants entries (exec-buffered) or this was a fork-only
+	// record with no exec data to preserve. Future fork/exec events on
+	// a recycled pid shouldn't route to this dead pending entry.
+	delete(m.pendingStarvedByPid, pid)
+	return true
+}
+
 // HandleStarvedDescendantFork registers a fork'd child whose parent is in
 // a pending starved session, so the child's later exec finds the pending
 // session via pendingStarvedByPid lookup. Returns true if the child was
@@ -245,6 +308,36 @@ func (m *SessionManager) HandleStarvedDescendantFork(childPid, parentPid uint32)
 	}
 	m.pendingStarvedByPid[childPid] = rootPid
 	return true
+}
+
+// replayBufferedDescendantLocked routes a single buffered descendant into
+// the materialized session: creates the process.exec span, and if the
+// descendant exited during the pending window, also closes the span with
+// its recorded exit. The latter step removes the pid from session.pids
+// so a pre-dead descendant doesn't hold the session open forever. Must
+// be called with m.mu held.
+func (m *SessionManager) replayBufferedDescendantLocked(session *TraceSession, d bufferedDescendantExec) {
+	m.addDescendantLocked(session, d.pid, d.ppid)
+	debuglog.L.Info("descendant_join",
+		append(sessionLogFields(session),
+			zap.Uint32("pid", d.pid),
+			zap.Uint32("ppid", d.ppid),
+			zap.String("via", "starved_replay"),
+		)...)
+	if err := session.HandleProcessExec(d.pid, d.ppid, d.uid, d.timestamp, d.metadata); err != nil {
+		log.Printf("session %s: replay exec for PID %d failed: %v", session.ID, d.pid, err)
+	}
+	if !d.exited {
+		return
+	}
+	if err := session.HandleProcessExit(d.pid, d.ppid, d.uid, d.exitCode, d.exitTime, d.exitComm); err != nil {
+		log.Printf("session %s: replay exit for PID %d failed: %v", session.ID, d.pid, err)
+	}
+	// Mirror HandleExit's bookkeeping without taking m.mu (already held).
+	// Session completion on rootPid's later exit will finalize the tree.
+	delete(m.pidToSession, d.pid)
+	m.totalPIDs--
+	session.RemovePID(d.pid)
 }
 
 // drainPendingByRootLocked removes all pendingStarvedByPid entries
@@ -342,20 +435,8 @@ func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession
 			zap.Int("buffered_descendants", len(descendants)),
 		)...)
 
-	// Replay buffered descendants in order. Each was already observed by
-	// BPF's exec tracking; we just need to produce the Go-side session
-	// routing and the process.exec spans.
 	for _, d := range descendants {
-		m.addDescendantLocked(session, d.pid, d.ppid)
-		debuglog.L.Info("descendant_join",
-			append(sessionLogFields(session),
-				zap.Uint32("pid", d.pid),
-				zap.Uint32("ppid", d.ppid),
-				zap.String("via", "starved_replay"),
-			)...)
-		if err := session.HandleProcessExec(d.pid, d.ppid, d.uid, d.timestamp, d.metadata); err != nil {
-			log.Printf("session %s: replay exec for PID %d failed: %v", session.ID, d.pid, err)
-		}
+		m.replayBufferedDescendantLocked(session, d)
 	}
 
 	// Claim fork-only descendants into the session. No exec was seen for

@@ -560,7 +560,26 @@ func (p *Processor) handleExit(event *bpf.Event) error {
 
 	session, completed := p.manager.HandleExit(pid)
 	if session == nil {
-		// Not in any session - buffer briefly in case EXEC_CANDIDATE hasn't arrived yet
+		// Not in any live session. First try the pending-starved path:
+		// if this pid is currently in pendingStarvedByPid, the manager
+		// records the exit against its pending entry (for exec-buffered
+		// descendants) or drops the record (for fork-only descendants).
+		// This prevents a dead pid from being claimed into session.pids
+		// at materialization and holding the session open indefinitely.
+		// See verify-traces-runc-starved.py's session-completion test.
+		if p.manager.HandleStarvedDescendantExit(pid, procData.ExitCode, event.Timestamp, procData.Comm[:]) {
+			if debuglog.Enabled() {
+				debuglog.L.Info("starved_pending_exit",
+					zap.Uint32("pid", pid),
+					zap.Uint32("ppid", event.Ppid),
+					zap.Uint32("exit_code", procData.ExitCode),
+					zap.String("comm", commString(procData.Comm[:])),
+				)
+			}
+			return nil
+		}
+		// Not pending-starved either — buffer briefly in case EXEC_CANDIDATE
+		// hasn't arrived yet (short-lived process race).
 		p.mu.Lock()
 		p.pendingExit[pid] = &pendingExitInfo{
 			pid:        pid,

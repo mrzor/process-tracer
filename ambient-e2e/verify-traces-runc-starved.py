@@ -92,6 +92,26 @@ def all_spans():
     return spans
 
 
+@pytest.fixture(scope="session")
+def debug_events():
+    """Loads the daemon's --debug-log JSON-lines file produced by the guest
+    VM. Co-located with traces.jsonl (same staging/ directory)."""
+    traces_path = TRACES_PATH or Path("staging/traces.jsonl")
+    debug_path = traces_path.parent / "debug.log"
+    if not debug_path.is_file():
+        return []
+    events = []
+    for line in debug_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return events
+
+
 def _descendants_of(spans, root):
     by_parent: dict = {}
     for s in spans:
@@ -330,6 +350,30 @@ class TestContextStarvedMaterialization:
         assert sleep_count == 4, (
             f"variant C: expected 4 sleep execs in longlived tree, "
             f"got {sleep_count}. commands={commands}"
+        )
+
+    def test_sessions_complete_before_daemon_shutdown(self, debug_events):
+        """At least one materialized session must emit a `session_end`
+        event with reason=completed before the daemon shuts down. This
+        proves the session-completion path works: every pid the session
+        tracked was accounted for and the root process.tree span closed
+        naturally (as opposed to being force-closed by CloseAllSessions
+        at daemon stop, which produces no session_end event at all).
+
+        Without this, stuck sessions hold their process.tree span open
+        until the daemon restarts — in production that means the
+        overarching CI-job span never reaches the APM. This assertion
+        is the regression guard for that class of bug."""
+        if not debug_events:
+            pytest.skip("debug.log not available (daemon --debug-log not enabled)")
+        session_ends = [e for e in debug_events if e.get("event") == "session_end"]
+        completed = [e for e in session_ends if e.get("reason") == "completed"]
+        assert completed, (
+            f"no session_end with reason=completed in debug.log. "
+            f"All materialized sessions stayed open until daemon shutdown, "
+            f"meaning session.pids never drained. Total session_end events: "
+            f"{len(session_ends)} (by reason: "
+            f"{sorted({e.get('reason') for e in session_ends})})."
         )
 
     def test_container_init_subtree_never_materializes(self, all_spans):

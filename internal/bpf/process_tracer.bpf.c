@@ -574,6 +574,24 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
     pid_t child_pid = ctx->child_pid;
     pid_t ancestor_pid = 0;
 
+    /* Skip thread creation. sched_process_fork fires for every clone()
+     * regardless of CLONE_THREAD — a multi-threaded process (e.g. the
+     * Go runtime in runc) generates a tracepoint event per thread, with
+     * child_pid set to the new thread's TID. Tracking threads is wrong:
+     * BPF's handle_exit silently drops thread exits (pid != tid check)
+     * so thread TIDs added here would never be removed from tracked_pids,
+     * and in ambient mode they'd propagate into Go's pidToSession and
+     * prevent session completion. We only care about process-level
+     * tracking. */
+    struct task_struct *ct = bpf_task_from_pid(child_pid);
+    if (ct) {
+        pid_t ct_tgid = bpf_core_cast(ct, struct task_struct)->tgid;
+        bpf_task_release(ct);
+        if (ct_tgid != child_pid) {
+            return 0;
+        }
+    }
+
     if (bpf_map_lookup_elem(&tracked_pids, &parent_pid)) {
         ancestor_pid = parent_pid;
     } else {

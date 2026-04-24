@@ -247,6 +247,36 @@ func (m *SessionManager) HandleStarvedDescendantFork(childPid, parentPid uint32)
 	return true
 }
 
+// drainPendingByRootLocked removes all pendingStarvedByPid entries
+// belonging to rootPid and returns the subset that are "fork-only" —
+// i.e. registered via HandleStarvedDescendantFork and not also present
+// as an exec-buffered descendant. Those fork-only pids live in BPF's
+// tracked_pids but have no corresponding entry in pidToSession; the
+// caller is expected to claim them into the new session so their
+// future fork/exec events route correctly. Must be called with m.mu
+// held.
+func (m *SessionManager) drainPendingByRootLocked(rootPid uint32, descendants []bufferedDescendantExec) []uint32 {
+	execBufferedPids := make(map[uint32]struct{}, len(descendants))
+	for _, d := range descendants {
+		execBufferedPids[d.pid] = struct{}{}
+	}
+	var forkOnlyPids []uint32
+	for pid, r := range m.pendingStarvedByPid {
+		if r != rootPid {
+			continue
+		}
+		delete(m.pendingStarvedByPid, pid)
+		if pid == rootPid {
+			continue // createSessionLocked adds rootPid to pidToSession
+		}
+		if _, isExec := execBufferedPids[pid]; isExec {
+			continue // replay loop handles exec-buffered descendants
+		}
+		forkOnlyPids = append(forkOnlyPids, pid)
+	}
+	return forkOnlyPids
+}
+
 // materializeStarvedLocked promotes a pending starved session to a real
 // TraceSession using the given context-ful descendant metadata for Expr
 // evaluation (merged with the root's args so process.command reflects the
@@ -296,12 +326,8 @@ func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession
 	rule := pending.rule
 	descendants := pending.descendants
 	delete(m.pendingStarved, rootPid)
-	// Clear pendingStarvedByPid entries that pointed at this root.
-	for pid, r := range m.pendingStarvedByPid {
-		if r == rootPid {
-			delete(m.pendingStarvedByPid, pid)
-		}
-	}
+
+	forkOnlyPids := m.drainPendingByRootLocked(rootPid, descendants)
 
 	session, err := m.createSessionLocked(rootPid, rule, merged)
 	if err != nil {
@@ -330,6 +356,24 @@ func (m *SessionManager) materializeStarvedLocked(pending *pendingStarvedSession
 		if err := session.HandleProcessExec(d.pid, d.ppid, d.uid, d.timestamp, d.metadata); err != nil {
 			log.Printf("session %s: replay exec for PID %d failed: %v", session.ID, d.pid, err)
 		}
+	}
+
+	// Claim fork-only descendants into the session. No exec was seen for
+	// these so there's no process.exec span to emit, but the pid must be
+	// in pidToSession so subsequent fork/exec events route correctly
+	// rather than falling through to exec_unclaimed. ppid is recorded as
+	// rootPid for the session_add — the exact forker is unrecoverable
+	// from pendingStarvedByPid (it only stores child→root) and Go's
+	// routing doesn't depend on ppid once pid is registered.
+	for _, pid := range forkOnlyPids {
+		m.addDescendantLocked(session, pid, rootPid)
+	}
+	if len(forkOnlyPids) > 0 && debuglog.Enabled() {
+		debuglog.L.Info("starved_fork_only_claimed",
+			append(sessionLogFields(session),
+				zap.Int("count", len(forkOnlyPids)),
+				zap.Any("pids", forkOnlyPids),
+			)...)
 	}
 
 	return session, nil

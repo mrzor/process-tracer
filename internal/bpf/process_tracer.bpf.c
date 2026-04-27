@@ -8,6 +8,12 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+/* Explicit kfunc declarations. vmlinux.h on some kernels (e.g. Azure
+ * runner kernels in CI) omits these task kfuncs; declare them locally
+ * so the BPF object compiles regardless of the generating kernel. */
+extern struct task_struct *bpf_task_from_pid(s32 pid) __weak __ksym;
+extern void bpf_task_release(struct task_struct *p) __weak __ksym;
+
 /* Operating mode: 0 = direct (default), 1 = ambient (daemon) */
 volatile const u8 ambient_mode = 0;
 

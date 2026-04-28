@@ -39,11 +39,11 @@ type Evaluator struct {
 // Expressions ("expr:" prefix) are pre-compiled; invalid ones are warned and skipped.
 // When skipEmptyValues is true, attributes that evaluate to an empty string are omitted from the result.
 func NewEvaluator(customAttrs []config.CustomAttribute, skipEmptyValues bool) (*Evaluator, error) {
-	exprEnv := map[string]interface{}{
+	exprEnv := withExtensions(map[string]interface{}{
 		"env":     map[string]string{},
 		"args":    []string{},
 		"cmdline": "",
-	}
+	})
 
 	var validAttrs []config.CustomAttribute
 	var compiledExprs []*vm.Program
@@ -94,11 +94,11 @@ func (e *Evaluator) AnyExprAttributeNonEmpty(metadata *procmeta.ProcessMetadata)
 	if metadata == nil || len(e.customAttrs) == 0 {
 		return false
 	}
-	env := map[string]interface{}{
+	env := withExtensions(map[string]interface{}{
 		"env":     metadata.Environ,
 		"args":    metadata.Args,
 		"cmdline": metadata.CmdlineFull,
-	}
+	})
 	for i := range e.customAttrs {
 		program := e.compiledExprs[i]
 		if program == nil {
@@ -126,11 +126,11 @@ func (e *Evaluator) EvaluateCustomAttributes(metadata *procmeta.ProcessMetadata)
 		return nil, nil
 	}
 
-	env := map[string]interface{}{
+	env := withExtensions(map[string]interface{}{
 		"env":     metadata.Environ,
 		"args":    metadata.Args,
 		"cmdline": metadata.CmdlineFull,
-	}
+	})
 
 	var attrs []attribute.KeyValue
 	for i, customAttr := range e.customAttrs {

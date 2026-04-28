@@ -256,6 +256,35 @@ Expressions use the [expr](https://expr-lang.org/) language with these bindings:
 If an `expr:` expression fails to compile, it is warned and skipped (attributes)
 or treated as unset (trace-id / parent-id). This tool never aborts on bad input.
 
+### Expr extensions
+
+In addition to the [stock expr-lang builtins](https://expr-lang.org/docs/language-definition),
+process-tracer registers a small set of helper functions for patterns that
+recur in CI/CD configs. These are available in every `expr:` value
+(`trace_id`, `parent_id`, and attributes).
+
+| Function | Signature | Description |
+|---|---|---|
+| `joinNonEmpty` | `joinNonEmpty(sep string, parts ...string) string` | Joins `parts` with `sep`, dropping empty strings. Useful for composing names from optional env vars without separator artifacts. |
+
+Example — service name from optional `PROJECT_TYPE` and required `PROJECT_NAME`:
+
+```yaml
+# PROJECT_TYPE="api", PROJECT_NAME="billing" -> "api-billing-ci"
+# PROJECT_TYPE="",    PROJECT_NAME="billing" -> "billing-ci"
+service.name: 'expr:joinNonEmpty("-", env["PROJECT_TYPE"], env["PROJECT_NAME"], "ci")'
+```
+
+Naive concatenation (`env["A"] + "-" + env["B"]`) leaves a leading or
+trailing dash when one variable is unset. `env[k]` returns `""` for
+missing keys (Go map semantics on a typed `map[string]string`); `??`
+nil-coalescing does not help here. Reach for `joinNonEmpty` whenever you
+combine optional env vars with a separator.
+
+Extensions live in `internal/attributes/extensions.go`. New helpers should
+be small, orthogonal, and obvious from the name; document each one in this
+table when adding it.
+
 ## Development
 
 - Use [mise](https://github.com/jdx/mise)

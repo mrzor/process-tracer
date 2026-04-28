@@ -341,6 +341,70 @@ func TestEvaluator_SkipEmptyValues_Literal(t *testing.T) {
 	}
 }
 
+// TestEvaluator_GitlabServiceName_OldConcatLeadingDashGotcha documents the
+// gotcha that motivated joinNonEmpty: naive `+`-concat of optional env vars
+// leaves separator artifacts when one side is empty. Anchored as a test so
+// future readers don't try to "fix" the concat semantics — that would break
+// every existing config relying on `env["X"]` returning "" for missing keys.
+func TestEvaluator_GitlabServiceName_OldConcatLeadingDashGotcha(t *testing.T) {
+	attrs := []config.CustomAttribute{
+		{Name: "service.name", Expression: `expr:env["PROJECT_TYPE"] + "-" + env["PROJECT_NAME"] + "-ci"`},
+	}
+
+	evaluator, err := NewEvaluator(attrs, false)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
+
+	result, err := evaluator.EvaluateCustomAttributes(&procmeta.ProcessMetadata{
+		Environ: map[string]string{"PROJECT_NAME": "billing"},
+	})
+	if err != nil {
+		t.Fatalf("EvaluateCustomAttributes() error = %v", err)
+	}
+	if got := result[0].Value.AsString(); got != "-billing-ci" {
+		t.Errorf("naive concat with missing PROJECT_TYPE = %q, want %q (gotcha is documented behavior)", got, "-billing-ci")
+	}
+}
+
+// TestEvaluator_GitlabServiceName_JoinNonEmptyFix is the recommended fix:
+// joinNonEmpty drops empty parts so a missing PROJECT_TYPE collapses cleanly.
+func TestEvaluator_GitlabServiceName_JoinNonEmptyFix(t *testing.T) {
+	attrs := []config.CustomAttribute{
+		{Name: "service.name", Expression: `expr:joinNonEmpty("-", env["PROJECT_TYPE"], env["PROJECT_NAME"], "ci")`},
+	}
+
+	evaluator, err := NewEvaluator(attrs, false)
+	if err != nil {
+		t.Fatalf("NewEvaluator() error = %v", err)
+	}
+
+	cases := []struct {
+		name string
+		env  map[string]string
+		want string
+	}{
+		{"both set", map[string]string{"PROJECT_TYPE": "api", "PROJECT_NAME": "billing"}, "api-billing-ci"},
+		{"type missing", map[string]string{"PROJECT_NAME": "billing"}, "billing-ci"},
+		{"name missing", map[string]string{"PROJECT_TYPE": "api"}, "api-ci"},
+		{"both missing", map[string]string{}, "ci"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := evaluator.EvaluateCustomAttributes(&procmeta.ProcessMetadata{Environ: tc.env})
+			if err != nil {
+				t.Fatalf("EvaluateCustomAttributes() error = %v", err)
+			}
+			if len(result) != 1 {
+				t.Fatalf("expected 1 attribute, got %d", len(result))
+			}
+			if got := result[0].Value.AsString(); got != tc.want {
+				t.Errorf("service.name = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSanitizeAttributeName(t *testing.T) {
 	tests := []struct {
 		input string

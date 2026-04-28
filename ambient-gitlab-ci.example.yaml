@@ -42,7 +42,10 @@ rules:
     add_debug_attributes: true
     attributes:
       # service.*
-      service.name: 'expr:env["PROJECT_TYPE"] + "-" + env["PROJECT_NAME"] + "-ci"'
+      # joinNonEmpty drops empty parts, so if PROJECT_TYPE is unset the
+      # result collapses to "<PROJECT_NAME>-ci" instead of "-<PROJECT_NAME>-ci".
+      # See README → "Values and Expressions" → "Expr extensions".
+      service.name: 'expr:joinNonEmpty("-", env["PROJECT_TYPE"], env["PROJECT_NAME"], "ci")'
 
       # cicd.pipeline.*
       cicd.pipeline.run.id: 'expr:env["CI_PIPELINE_ID"]'

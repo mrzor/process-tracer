@@ -50,11 +50,13 @@ type ParentIDResolution struct {
 }
 
 // exprEnvTemplate is the type-checking environment for expr compilation.
-var exprEnvTemplate = map[string]interface{}{
+// Includes the extension functions so trace_id / parent_id expressions can
+// use the same helpers (e.g. joinNonEmpty) as attribute expressions.
+var exprEnvTemplate = withExtensions(map[string]interface{}{
 	"env":     map[string]string{},
 	"args":    []string{},
 	"cmdline": "",
-}
+})
 
 // compileExprValue parses a value that may have an "expr:" prefix.
 // Returns (program, literal, exprBody, error):
@@ -85,11 +87,11 @@ func evaluateProgram(program *vm.Program, metadata *procmeta.ProcessMetadata) (s
 	if metadata == nil {
 		return "", fmt.Errorf("no metadata available")
 	}
-	env := map[string]interface{}{
+	env := withExtensions(map[string]interface{}{
 		"env":     metadata.Environ,
 		"args":    metadata.Args,
 		"cmdline": metadata.CmdlineFull,
-	}
+	})
 	output, err := expr.Run(program, env)
 	if err != nil {
 		return "", err

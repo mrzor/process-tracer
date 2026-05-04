@@ -66,6 +66,19 @@ type OTELFormatter struct {
 	resolvedTraceID        string // 32-char hex, or "" if unresolved
 	resolvedTraceExprValue string // pre-hash expr output, or "" if not expr-sourced
 	resolvedTraceSource    string // attributes.Source* value
+
+	// Rule-derived custom attributes resolved once at StartSession against
+	// the firing/materialization metadata. Applied uniformly to every span
+	// emitted within this session — process.tree root, process.exec spans
+	// (both new and replayed), and TCP spans. Tree-scope by design: rule
+	// attributes (service.name, ci.job.id, …) describe the trace, not
+	// individual processes. Re-evaluating per-process against each
+	// descendant's frozen env produced inconsistent values across spans
+	// in the same trace — most visibly in starved-mode where buffered
+	// runc-init replay descendants carry pre-container env while the
+	// trigger and beyond carry container env. Snapshot here makes the
+	// trace consistent.
+	sessionAttrs []attribute.KeyValue
 }
 
 // NewOTELFormatter creates a new OTEL formatter.
@@ -131,7 +144,25 @@ func (f *OTELFormatter) StartSession(ctx context.Context, metadata *procmeta.Pro
 	f.sessionRootSpan = span
 	f.sessionRootCtx = span.SpanContext()
 
+	// Snapshot rule-derived attributes against the firing metadata once;
+	// every span in this session reuses this snapshot via applySessionAttrs.
+	if metadata != nil {
+		if attrs, err := f.attrEvaluator.EvaluateCustomAttributes(metadata); err == nil {
+			f.sessionAttrs = attrs
+		} else {
+			log.Printf("warning: session custom-attribute evaluation failed: %v", err)
+		}
+	}
+
 	f.attachSessionAttributes(span, metadata, warnings, debugAttrs)
+}
+
+// applySessionAttrs sets the session-snapshot rule attributes on span.
+// No-op if the snapshot is empty (rule had no attrs, or eval produced none).
+func (f *OTELFormatter) applySessionAttrs(span trace.Span) {
+	if len(f.sessionAttrs) > 0 {
+		span.SetAttributes(f.sessionAttrs...)
+	}
 }
 
 // withCustomParent wraps ctx with a virtual parent SpanContext carrying the
@@ -188,11 +219,7 @@ func (f *OTELFormatter) attachSessionAttributes(
 			span.SetAttributes(attribute.StringSlice("debug.environ", environToSlice(metadata.Environ)))
 		}
 	}
-	if metadata != nil {
-		if customAttrs, err := f.attrEvaluator.EvaluateCustomAttributes(metadata); err == nil && len(customAttrs) > 0 {
-			span.SetAttributes(customAttrs...)
-		}
-	}
+	f.applySessionAttrs(span)
 }
 
 // ResolvedTraceID returns the 32-char hex trace ID this formatter applied to
@@ -222,6 +249,12 @@ func (f *OTELFormatter) EndSession(endTime time.Time) {
 	}
 	f.sessionRootSpan.End(trace.WithTimestamp(endTime))
 	f.sessionRootSpan = nil
+	// sessionAttrs is intentionally NOT cleared here. EndSession runs in
+	// manager.HandleExit before processExit → HandleProcessExit, so the
+	// matched root's own process.exec span finalizes *after* EndSession.
+	// Clearing the snapshot here would strip rule attrs from that final
+	// span. The formatter is per-session and is dropped with the session,
+	// so leaving the snapshot in place has no leak risk.
 }
 
 // resolveRootIDs evaluates the trace-id and parent-id expressions against metadata.
@@ -379,12 +412,6 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 	// Calculate duration
 	duration := timestamp - spanInfo.StartTime
 
-	// Evaluate custom attributes
-	var customAttrs []attribute.KeyValue
-	if metadata != nil {
-		customAttrs, _ = f.attrEvaluator.EvaluateCustomAttributes(metadata) //nolint:errcheck // XXX: Consider logging custom attribute evaluation failures
-	}
-
 	// Extract comm string
 	commStr := string(bytes.TrimRight(comm, "\x00"))
 
@@ -398,10 +425,9 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 		attribute.Int64("process.duration_ns", int64(duration)),
 	)
 
-	// Add custom attributes if any
-	if len(customAttrs) > 0 {
-		spanInfo.Span.SetAttributes(customAttrs...)
-	}
+	// Apply session-snapshot rule attributes (service.name, ci.*). Tree-scope
+	// by design — see OTELFormatter.sessionAttrs comment.
+	f.applySessionAttrs(spanInfo.Span)
 
 	// Add debug attributes (argv + environ) to every span when enabled.
 	// These may contain sensitive information and are gated behind an opt-in flag.
@@ -522,12 +548,8 @@ func (f *OTELFormatter) HandleTCPClose(pid uint32, skaddr uint64, saddr, daddr [
 		attrs = append(attrs, attribute.String("network.pseudo_reverse_dns.src_host", strings.Join(srcHosts, ",")))
 	}
 
-	// Evaluate custom attributes (e.g. service.name) from the owning process's metadata.
-	if metadata := f.metadataManager.Get(pid); metadata != nil {
-		if customAttrs, err := f.attrEvaluator.EvaluateCustomAttributes(metadata); err == nil && len(customAttrs) > 0 {
-			attrs = append(attrs, customAttrs...)
-		}
-	}
+	// Append session-snapshot rule attributes (service.name, ci.*) — tree-scope.
+	attrs = append(attrs, f.sessionAttrs...)
 
 	spanInfo.Span.SetAttributes(attrs...)
 	spanInfo.Span.SetStatus(codes.Ok, "Connection closed")

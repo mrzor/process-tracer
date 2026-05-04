@@ -161,9 +161,9 @@ class TestContextStarvedMaterialization:
     def test_variant_a_immediate_child(self, all_spans):
         """Variant A: CI_* passed via `runc exec -e`. The `id` child's
         envp carries them → materialize on the first descendant exec."""
-        trees = _trees_by_service(all_spans, "demo")
+        trees = _trees_by_service(all_spans, "demo-ci")
         assert len(trees) == 1, (
-            f"expected exactly one process.tree with service.name=demo, "
+            f"expected exactly one process.tree with service.name=demo-ci, "
             f"got {len(trees)}: "
             f"{[t.attrs.get('ci.job.id') for t in trees]}"
         )
@@ -183,9 +183,9 @@ class TestContextStarvedMaterialization:
     def test_variant_b_grandchild_via_starved_shell(self, all_spans):
         """Variant B: `sh` has no CI_* in envp (starved), grandchild `id`
         inherits runtime-exported CI_* → materialize on the grandchild."""
-        trees = _trees_by_service(all_spans, "runtime")
+        trees = _trees_by_service(all_spans, "runtime-ci")
         assert len(trees) == 1, (
-            f"expected exactly one process.tree with service.name=runtime, "
+            f"expected exactly one process.tree with service.name=runtime-ci, "
             f"got {len(trees)}"
         )
         tree = trees[0]
@@ -220,8 +220,8 @@ class TestContextStarvedMaterialization:
     def test_variants_a_and_b_are_separate_traces(self, all_spans):
         """Each `runc exec` invocation is its own pending-starved session,
         materialized independently → distinct trace_ids."""
-        a = _trees_by_service(all_spans, "demo")[0]
-        b = _trees_by_service(all_spans, "runtime")[0]
+        a = _trees_by_service(all_spans, "demo-ci")[0]
+        b = _trees_by_service(all_spans, "runtime-ci")[0]
         assert a.trace_id != b.trace_id, (
             f"variant A and B share trace_id {a.trace_id} — they must be "
             f"materialized into separate traces."
@@ -239,9 +239,9 @@ class TestContextStarvedMaterialization:
         reparenting didn't happen as expected, or BPF's fork tracking
         is more robust than the production evidence suggests — in which
         case production's failure mode is somewhere else entirely."""
-        trees = _trees_by_service(all_spans, "detached")
+        trees = _trees_by_service(all_spans, "detached-ci")
         assert len(trees) == 1, (
-            f"expected exactly one process.tree with service.name=detached, "
+            f"expected exactly one process.tree with service.name=detached-ci, "
             f"got {len(trees)}"
         )
         tree = trees[0]
@@ -281,9 +281,9 @@ class TestContextStarvedMaterialization:
         Post-fix: all 5 in the tree. Today: fewer than 5 (the missing
         ones appear as exec_unclaimed with tracked_ancestor=0 in the
         debug log)."""
-        trees = _trees_by_service(all_spans, "leaked")
+        trees = _trees_by_service(all_spans, "leaked-ci")
         assert len(trees) == 1, (
-            f"expected exactly one process.tree with service.name=leaked, "
+            f"expected exactly one process.tree with service.name=leaked-ci, "
             f"got {len(trees)}"
         )
         tree = trees[0]
@@ -319,9 +319,9 @@ class TestContextStarvedMaterialization:
         this test catches the basic "post-materialisation fork tracking
         works at all" invariant. A future variant with a multi-hop
         container setup should pin the production shape."""
-        trees = _trees_by_service(all_spans, "longlived")
+        trees = _trees_by_service(all_spans, "longlived-ci")
         assert len(trees) == 1, (
-            f"expected exactly one process.tree with service.name=longlived, "
+            f"expected exactly one process.tree with service.name=longlived-ci, "
             f"got {len(trees)}"
         )
         tree = trees[0]
@@ -376,6 +376,48 @@ class TestContextStarvedMaterialization:
             f"{sorted({e.get('reason') for e in session_ends})})."
         )
 
+    def test_per_tree_service_name_is_consistent(self, all_spans):
+        """Regression: rule attributes (service.name, ci.*) are tree-scope.
+        Every span sharing a process.tree's trace_id must carry the same
+        service.name as the tree root.
+
+        Pre-fix bug: per-process EvaluateCustomAttributes evaluated against
+        each descendant's frozen env. In starved mode the buffered runc-init
+        replay descendants and post-materialisation fork-only descendants
+        carried pre-container env, so their service.name resolved to the
+        joinNonEmpty literal-fallback ('ci') while the trigger and inner-env
+        descendants resolved to '<name>-ci'. Asymmetric attrs within one
+        trace.
+
+        Post-fix: rule attributes are snapshotted once at StartSession
+        against the firing/materialisation metadata and applied uniformly.
+        Every span in a tree carries the same service.name."""
+        trees = [s for s in all_spans if s.name == "process.tree"]
+        assert trees, "no process.tree roots found"
+
+        violations: list[str] = []
+        for tree in trees:
+            expected = tree.attrs.get("service.name")
+            tree_spans = [s for s in all_spans if s.trace_id == tree.trace_id]
+            for s in tree_spans:
+                if s.span_id == tree.span_id:
+                    continue
+                got = s.attrs.get("service.name")
+                # Allow absence (empty-skip on a per-span basis is legal),
+                # but a *different* non-empty value is the bug.
+                if got is not None and got != expected:
+                    violations.append(
+                        f"trace={tree.trace_id[:8]} root.service.name={expected!r} "
+                        f"but {s.name} cmd={s.attrs.get('process.command')!r} "
+                        f"carries service.name={got!r}"
+                    )
+
+        assert not violations, (
+            "per-tree service.name divergence — rule attributes must be "
+            "tree-scope, not per-process. Violations:\n  "
+            + "\n  ".join(violations)
+        )
+
     def test_container_init_subtree_never_materializes(self, all_spans):
         """`runc run` also matches `command: runc` but its subtree (sh,
         sleep) carries no CI_* env, so the rule's Expr never resolves.
@@ -388,7 +430,7 @@ class TestContextStarvedMaterialization:
         matters is the absence of a spurious tree."""
         trees = [s for s in all_spans if s.name == "process.tree"]
         unexpected = [t for t in trees
-                      if t.attrs.get("service.name") not in ("demo", "runtime", "longlived", "detached", "leaked")]
+                      if t.attrs.get("service.name") not in ("demo-ci", "runtime-ci", "longlived-ci", "detached-ci", "leaked-ci")]
         assert not unexpected, (
             f"unexpected process.tree(s) materialized: "
             f"{[(t.attrs.get('service.name'), t.attrs.get('ci.job.id')) for t in unexpected]}"

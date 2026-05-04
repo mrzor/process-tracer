@@ -31,7 +31,13 @@ rules:
     # content. Use a single env lookup so the gate has a clean signal.
     trace_id: 'expr:env["CI_JOB_ID"]'
     attributes:
-      service.name: 'expr:env["CI_PROJECT_NAME"]'
+      # Mirrors the production GitLab expr shape: a joinNonEmpty whose final
+      # argument is a literal ("ci"), so the expr resolves to "ci" when env
+      # has no CI_PROJECT_* (outer / runc-init replay path) and to
+      # "<name>-ci" once a descendant carries CI_PROJECT_NAME (trigger and
+      # beyond). This surfaces the buffered-replay attr divergence the
+      # single-env-lookup form silently hides.
+      service.name: 'expr:joinNonEmpty("-", env["CI_PROJECT_TYPE"], env["CI_PROJECT_NAME"], "ci")'
       ci.job.id: 'expr:env["CI_JOB_ID"]'
       ci.pipeline.id: 'expr:env["CI_PIPELINE_ID"]'
 

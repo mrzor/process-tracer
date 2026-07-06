@@ -330,7 +330,7 @@ func (f *OTELFormatter) HandleProcessExec(pid, ppid, _ uint32, timestamp uint64,
 	}
 
 	// Convert monotonic timestamp to wall clock for span start time
-	startTime := f.converter.MonotonicToWallClock(timestamp)
+	startTime := f.converter.BootNanosToWallClock(timestamp)
 
 	// Start span with explicit start time. Set process.pid immediately so
 	// exec-replaced spans (ended early, before HandleProcessExit) still carry it.
@@ -407,7 +407,7 @@ func (f *OTELFormatter) HandleProcessExit(pid, ppid, uid uint32, _ uint32, times
 	metadata := f.metadataManager.Get(pid)
 
 	// Convert monotonic timestamp to wall clock for span end time
-	endTime := f.converter.MonotonicToWallClock(timestamp)
+	endTime := f.converter.BootNanosToWallClock(timestamp)
 
 	// Calculate duration
 	duration := timestamp - spanInfo.StartTime
@@ -481,7 +481,7 @@ func (f *OTELFormatter) HandleTCPConnect(pid uint32, skaddr uint64, _, _ []byte,
 	}
 
 	// Convert monotonic timestamp to wall clock for span start time
-	startTime := f.converter.MonotonicToWallClock(timestamp)
+	startTime := f.converter.BootNanosToWallClock(timestamp)
 
 	// Start TCP connection span as child of process span
 	_, span := f.tracer.Start(ctx, "tcp.connect",
@@ -508,7 +508,7 @@ func (f *OTELFormatter) HandleTCPClose(pid uint32, skaddr uint64, saddr, daddr [
 	}
 
 	// Convert monotonic timestamp to wall clock for span end time
-	endTime := f.converter.MonotonicToWallClock(timestamp)
+	endTime := f.converter.BootNanosToWallClock(timestamp)
 
 	// Calculate duration
 	duration := timestamp - spanInfo.StartTime

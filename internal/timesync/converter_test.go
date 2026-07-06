@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func TestConverter_MonotonicToWallClock(t *testing.T) {
+func TestConverter_BootNanosToWallClock(t *testing.T) {
 	// Create a converter with a known boot time
 	bootTime := time.Unix(1000000000, 0) // 2001-09-09 01:46:40 UTC
 	converter := &Converter{
@@ -13,37 +13,37 @@ func TestConverter_MonotonicToWallClock(t *testing.T) {
 	}
 
 	tests := []struct {
-		name           string
-		monotonicNanos uint64
-		want           time.Time
+		name      string
+		bootNanos uint64
+		want      time.Time
 	}{
 		{
-			name:           "zero nanoseconds",
-			monotonicNanos: 0,
-			want:           bootTime,
+			name:      "zero nanoseconds",
+			bootNanos: 0,
+			want:      bootTime,
 		},
 		{
-			name:           "one second",
-			monotonicNanos: 1_000_000_000,
-			want:           bootTime.Add(1 * time.Second),
+			name:      "one second",
+			bootNanos: 1_000_000_000,
+			want:      bootTime.Add(1 * time.Second),
 		},
 		{
-			name:           "one hour",
-			monotonicNanos: 3_600_000_000_000,
-			want:           bootTime.Add(1 * time.Hour),
+			name:      "one hour",
+			bootNanos: 3_600_000_000_000,
+			want:      bootTime.Add(1 * time.Hour),
 		},
 		{
-			name:           "mixed time",
-			monotonicNanos: 123_456_789_000,
-			want:           bootTime.Add(123*time.Second + 456*time.Millisecond + 789*time.Microsecond),
+			name:      "mixed time",
+			bootNanos: 123_456_789_000,
+			want:      bootTime.Add(123*time.Second + 456*time.Millisecond + 789*time.Microsecond),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := converter.MonotonicToWallClock(tt.monotonicNanos)
+			got := converter.BootNanosToWallClock(tt.bootNanos)
 			if !got.Equal(tt.want) {
-				t.Errorf("MonotonicToWallClock() = %v, want %v", got, tt.want)
+				t.Errorf("BootNanosToWallClock() = %v, want %v", got, tt.want)
 			}
 		})
 	}

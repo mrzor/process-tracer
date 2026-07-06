@@ -253,6 +253,46 @@ def test_sleep_duration(all_spans):
         f"shortest sleep was {min(durations) // 1_000_000}ms, expected >= 150ms"
 
 
+# -- Clock coherence (regression guard for the root/child clock-skew bug) --
+
+
+def test_root_clock_matches_children(all_spans):
+    """Regression guard for process-tracer-axd.
+
+    The synthetic process.tree root is stamped from userspace with
+    CLOCK_REALTIME (time.Now()), while eBPF child spans are stamped in-kernel.
+    Those must share a clock domain: the kernel side uses
+    bpf_ktime_get_boot_ns() (CLOCK_BOOTTIME) precisely so it tracks wall-clock
+    across suspend. If the kernel side regresses to CLOCK_MONOTONIC (which
+    freezes during suspend), the root no longer brackets its children and the
+    rendered trace duration balloons to hours on any host that has suspended.
+
+    A freshly booted CI VM never suspends, so CLOCK_MONOTONIC == CLOCK_BOOTTIME
+    here and this cannot reproduce the original bug — but it locks in the
+    invariant (root brackets children; whole-trace extent is seconds, not
+    hours) against future regressions that manifest at trace time.
+    """
+    tree = _process_tree(all_spans)
+    assert tree is not None, "no process.tree span"
+
+    starts = [s.start_unix_nano for s in all_spans if s.start_unix_nano]
+    ends = [s.end_unix_nano for s in all_spans if s.end_unix_nano]
+    assert starts and ends, "spans missing timestamps"
+    extent_s = (max(ends) - min(starts)) / 1e9
+    assert extent_s < 300, \
+        f"trace wall-clock extent {extent_s:.1f}s exceeds 300s — likely root/child clock skew"
+
+    execs = [s for s in _exec_spans(all_spans) if s.start_unix_nano and s.end_unix_nano]
+    assert execs, "no timestamped exec spans"
+    tol = 5_000_000_000  # 5s: root/child clocks are read a moment apart
+    earliest_child = min(s.start_unix_nano for s in execs)
+    latest_child = max(s.end_unix_nano for s in execs)
+    assert tree.start_unix_nano <= earliest_child + tol, \
+        f"root starts {(tree.start_unix_nano - earliest_child)/1e9:.1f}s after earliest child — clock skew"
+    assert tree.end_unix_nano >= latest_child - tol, \
+        f"root ends {(latest_child - tree.end_unix_nano)/1e9:.1f}s before latest child — clock skew"
+
+
 # -- No-orphan invariant (regression guard for the orphan-fallback fix) --
 
 

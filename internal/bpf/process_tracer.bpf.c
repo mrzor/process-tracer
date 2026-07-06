@@ -8,6 +8,14 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
+/* Timestamp clock: all event/span timestamps use bpf_ktime_get_boot_ns()
+ * (CLOCK_BOOTTIME), NOT bpf_ktime_get_ns() (CLOCK_MONOTONIC). CLOCK_MONOTONIC
+ * freezes across suspend, so btime + monotonic drifts behind wall-clock by the
+ * host's cumulative suspend time — which desyncs these spans from the
+ * process.tree root span (stamped with the userspace CLOCK_REALTIME clock) and
+ * inflates the rendered trace duration. CLOCK_BOOTTIME advances during suspend,
+ * matching wall-clock; see internal/timesync/converter.go. */
+
 /* Explicit kfunc declarations. vmlinux.h on some kernels (e.g. Azure
  * runner kernels in CI) omits these task kfuncs; declare them locally
  * so the BPF object compiles regardless of the generating kernel. */
@@ -416,7 +424,7 @@ static __always_inline int emit_ancestor_trace(pid_t subject_pid, pid_t subject_
     ev->pid = subject_pid;
     ev->ppid = subject_ppid;
     ev->uid = subject_uid;
-    ev->timestamp = bpf_ktime_get_ns();
+    ev->timestamp = bpf_ktime_get_boot_ns();
     ev->type = EVENT_ANCESTOR_TRACE;
     ev->reason = reason;
     ev->num_hops = 0;
@@ -539,7 +547,7 @@ int handle_exec(struct trace_event_raw_sched_process_exec *ctx)
     e->pid = pid;
     e->uid = (u32)uid_gid;
     e->ppid = ppid;
-    e->timestamp = bpf_ktime_get_ns();
+    e->timestamp = bpf_ktime_get_boot_ns();
 
     bpf_get_current_comm(&e->data.proc.comm, sizeof(e->data.proc.comm));
     e->data.proc.exit_code = 0;
@@ -649,7 +657,7 @@ int handle_fork(struct trace_event_raw_sched_process_fork *ctx)
     e->pid = child_pid;
     e->ppid = parent_pid;
     e->uid = (u32)bpf_get_current_uid_gid();
-    e->timestamp = bpf_ktime_get_ns();
+    e->timestamp = bpf_ktime_get_boot_ns();
     e->data.proc.tracked_ancestor = (ancestor_pid != parent_pid) ? ancestor_pid : 0;
     /* PID namespace inum — caller's (forking task's) namespace; child
      * inherits unless CLONE_NEWPID was set, which is the interesting case. */
@@ -685,7 +693,7 @@ int trace_clone(struct trace_event_raw_sys_enter *ctx)
     ev->tgid = pid_tgid >> 32;
     ev->uid = (u32)bpf_get_current_uid_gid();
     ev->flags = (u64)ctx->args[0];
-    ev->timestamp = bpf_ktime_get_ns();
+    ev->timestamp = bpf_ktime_get_boot_ns();
     ev->type = EVENT_CLONE_SYSCALL;
     ev->variant = 0;
     bpf_get_current_comm(&ev->comm, sizeof(ev->comm));
@@ -721,7 +729,7 @@ int trace_clone3(struct trace_event_raw_sys_enter *ctx)
     ev->tgid = pid_tgid >> 32;
     ev->uid = (u32)bpf_get_current_uid_gid();
     ev->flags = flags;
-    ev->timestamp = bpf_ktime_get_ns();
+    ev->timestamp = bpf_ktime_get_boot_ns();
     ev->type = EVENT_CLONE_SYSCALL;
     ev->variant = 1;
     bpf_get_current_comm(&ev->comm, sizeof(ev->comm));
@@ -763,7 +771,7 @@ int handle_exit(struct trace_event_raw_sched_process_template *ctx)
     e->type = EVENT_EXIT;
     e->pid = pid;
     e->uid = (u32)uid_gid;
-    e->timestamp = bpf_ktime_get_ns();
+    e->timestamp = bpf_ktime_get_boot_ns();
 
     ppid = bpf_core_cast(task, struct task_struct)->real_parent->tgid;
     e->ppid = ppid;
@@ -827,7 +835,7 @@ int BPF_KRETPROBE(tcp_v4_connect_exit, int ret)
     skaddr = (u64)sk;
 
     /* Store in active connections map */
-    span_info.start_time = bpf_ktime_get_ns();
+    span_info.start_time = bpf_ktime_get_boot_ns();
     span_info.pid = pid;
     span_info.family = family;
     bpf_map_update_elem(&active_tcp_conns, &skaddr, &span_info, BPF_ANY);
@@ -902,7 +910,7 @@ int BPF_KRETPROBE(tcp_v6_connect_exit, int ret)
     skaddr = (u64)sk;
 
     /* Store in active connections map */
-    span_info.start_time = bpf_ktime_get_ns();
+    span_info.start_time = bpf_ktime_get_boot_ns();
     span_info.pid = pid;
     span_info.family = family;
     bpf_map_update_elem(&active_tcp_conns, &skaddr, &span_info, BPF_ANY);
@@ -964,7 +972,7 @@ int handle_inet_sock_set_state(struct trace_event_raw_inet_sock_set_state *ctx)
     e->pid = existing_span->pid;
     e->ppid = 0;
     e->uid = (u32)bpf_get_current_uid_gid();
-    e->timestamp = bpf_ktime_get_ns();
+    e->timestamp = bpf_ktime_get_boot_ns();
 
     e->data.tcp.skaddr = skaddr;
     e->data.tcp.sport = sport;

@@ -21,6 +21,7 @@ import (
 //   - OTEL_EXPORTER_OTLP_ENDPOINT          — base endpoint URL or host:port (default: localhost:4318)
 //   - OTEL_EXPORTER_OTLP_INSECURE          — force plain HTTP when "true" (default: auto-detect from endpoint)
 //   - PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS    — max time in ms to flush spans at exit (default: 200)
+//   - PROCESS_TRACER_OTEL_JSON_FILE          — write OTLP JSON (JSONL) to this path instead of the network exporter
 //
 // The following env vars are handled natively by the otlptracehttp library.
 // We do not parse them, but they are effective at runtime:
@@ -38,6 +39,10 @@ type OTELConfig struct {
 	ExporterEndpoint   string `env:"OTEL_EXPORTER_OTLP_ENDPOINT" envDefault:""`
 	Insecure           string `env:"OTEL_EXPORTER_OTLP_INSECURE" envDefault:""`
 	ShutdownTimeoutMs  int    `env:"PROCESS_TRACER_SHUTDOWN_TIMEOUT_MS" envDefault:"200"`
+	// JSONFile, when non-empty, diverts export from the OTLP/HTTP network
+	// exporter to a local OTLP JSON (JSONL) file at this path. The path may be a
+	// named pipe (mkfifo) to stream spans into another tool.
+	JSONFile string `env:"PROCESS_TRACER_OTEL_JSON_FILE" envDefault:""`
 }
 
 // ShutdownTimeout returns the configured shutdown timeout as a time.Duration.

@@ -104,6 +104,9 @@ export PROCESS_TRACER_ATTRIBUTES='env_name=expr:env["ENVIRONMENT"];region=expr:e
 
 ### OpenTelemetry Exporter
 
+By default spans are exported over the network using the OTLP/HTTP exporter. Alternatively they
+can be written to a local file as OTLP JSON — see "JSON file output" below.
+
 The OTLP/HTTP exporter is configured via standard OTEL environment variables. Some are parsed
 by process-tracer, others are handled natively by the `otlptracehttp` library.
 
@@ -131,6 +134,31 @@ over their base counterparts and are also supported by the library.
 
 TLS is enabled by default for non-localhost endpoints. For local development with a collector
 on `localhost`, plain HTTP is used automatically.
+
+### JSON file output
+
+Instead of exporting over the network, spans can be written to a local file as OTLP JSON
+(JSONL — one `ExportTraceServiceRequest` document per export batch). The format is identical to
+what the OpenTelemetry Collector's `file` exporter produces, so the output can be replayed into
+a collector or read by any tool that consumes OTLP JSON — no collector needs to be running.
+
+| Flag | Env | Description |
+|---|---|---|
+| `--otel-json-file PATH` | `PROCESS_TRACER_OTEL_JSON_FILE` | Write OTLP JSON to `PATH` instead of the network exporter |
+
+When set, this takes precedence over the OTLP/HTTP endpoint. `PATH` may be a regular file or a
+named pipe. To stream spans into another tool while keeping the traced command's own stdout on
+your terminal, use a `mkfifo` pipe:
+
+```bash
+mkfifo /tmp/spans
+otel-tui < /tmp/spans &   # or any OTLP-JSON consumer reading stdin
+sudo ./process-tracer trace --otel-json-file /tmp/spans -- ./sample-workload.sh
+```
+
+There is deliberately no "spans to stdout" mode: the traced command inherits the tracer's
+stdout, so a raw span stream on stdout would interleave with the command's output. The `mkfifo`
+approach keeps the two streams cleanly separated.
 
 ## Symlink Mode
 

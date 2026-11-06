@@ -20,9 +20,10 @@ for arg in "$@"; do
         --rebuild-base|--force-rebuild) REBUILD_BASE=true ;;
         --mode=daemon) MODE=daemon ;;
         --mode=trace) MODE=trace ;;
+        --mode=trace-json) MODE=trace-json ;;
         --mode=runc) MODE=runc ;;
         --mode=runc-starved) MODE=runc-starved ;;
-        --mode=*) echo "Unknown mode: ${arg#--mode=} (must be daemon, trace, runc, or runc-starved)"; exit 1 ;;
+        --mode=*) echo "Unknown mode: ${arg#--mode=} (must be daemon, trace, trace-json, runc, or runc-starved)"; exit 1 ;;
         *) echo "Unknown flag: $arg"; exit 1 ;;
     esac
 done
@@ -169,6 +170,8 @@ ok "host/build" "Done"
 cp "$SCRIPT_DIR/Makefile.pipeline" "$STAGING/"
 if [[ "$MODE" == "trace" ]]; then
     cp "$SCRIPT_DIR/guest-run-trace.sh" "$STAGING/guest-run.sh"
+elif [[ "$MODE" == "trace-json" ]]; then
+    cp "$SCRIPT_DIR/guest-run-trace-json.sh" "$STAGING/guest-run.sh"
 elif [[ "$MODE" == "runc" ]]; then
     cp "$SCRIPT_DIR/guest-run-runc.sh" "$STAGING/guest-run.sh"
     cp "$SCRIPT_DIR/ambient-runc.yaml" "$STAGING/"
@@ -319,7 +322,9 @@ fi
 # --- Verify traces ---
 
 echo ""
-if [[ "$MODE" == "trace" ]]; then
+if [[ "$MODE" == "trace" || "$MODE" == "trace-json" ]]; then
+    # trace-json runs the same workload but the guest emits --otel-json-file and
+    # replays that JSON back through the collector, so the same verifier applies.
     uv run --script "$SCRIPT_DIR/verify-traces-trace.py" "$STAGING/traces.jsonl"
 elif [[ "$MODE" == "runc" ]]; then
     uv run --script "$SCRIPT_DIR/verify-traces-runc.py" "$STAGING/traces.jsonl"

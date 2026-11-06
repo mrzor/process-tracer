@@ -84,6 +84,20 @@ func traceCommand() *cli.Command {
 				Usage:       "Add debug.* span attributes (argv, environ, trace/parent-id provenance). May leak secrets.",
 				Destination: &addDebugAttributes,
 			},
+			&cli.StringFlag{
+				Name:    "otel-json-file",
+				Usage:   "Write spans as OTLP JSON (JSONL) to this file instead of the network exporter. May be a mkfifo pipe.",
+				Sources: cli.EnvVars("PROCESS_TRACER_OTEL_JSON_FILE"),
+				Action: func(_ context.Context, _ *cli.Command, s string) error {
+					if s != "" {
+						// OTELConfig is env-sourced; publish the override so
+						// setupTraceOTEL's ParseOTELConfig picks it up (same idiom
+						// as the daemon's endpoint handling).
+						return os.Setenv("PROCESS_TRACER_OTEL_JSON_FILE", s)
+					}
+					return nil
+				},
+			},
 		},
 		UseShortOptionHandling: true,
 		Action: func(_ context.Context, cmd *cli.Command) error {

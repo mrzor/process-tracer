@@ -9,12 +9,48 @@ import (
 	"time"
 
 	"github.com/mrzor/process-tracer/internal/config"
+	"github.com/mrzor/process-tracer/internal/otel/otlpjson"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 )
+
+// newExporter builds the span exporter for the given config. When cfg.JSONFile
+// is set, spans are written as OTLP JSON (JSONL) to that path (which may be a
+// named pipe); otherwise the OTLP/HTTP network exporter is used.
+func newExporter(ctx context.Context, cfg *config.OTELConfig) (sdktrace.SpanExporter, error) {
+	if cfg.JSONFile != "" {
+		log.Printf("OTEL output: OTLP JSON file %s", cfg.JSONFile)
+		// os.Create works for a regular file and for an existing fifo (opening a
+		// fifo for write blocks until a reader attaches — the desired streaming
+		// behavior). The file is closed on exporter shutdown via the client's Stop.
+		f, err := os.Create(cfg.JSONFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open OTLP JSON file %q: %w", cfg.JSONFile, err)
+		}
+		exporter, err := otlpjson.New(f, f)
+		if err != nil {
+			if cerr := f.Close(); cerr != nil {
+				log.Printf("error closing OTLP JSON file after setup failure: %v", cerr)
+			}
+			return nil, fmt.Errorf("failed to create OTLP JSON exporter: %w", err)
+		}
+		return exporter, nil
+	}
+
+	// Log OTLP/HTTP connection details only when the network exporter is in use.
+	logConnectionInfo(cfg)
+
+	// Endpoint and TLS options are derived from config; timeout, headers,
+	// compression, and certificates are handled by the library's own env var parsing.
+	exporter, err := otlptracehttp.New(ctx, cfg.EndpointOptions()...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+	}
+	return exporter, nil
+}
 
 // logConnectionInfo logs proxy and TLS configuration for debugging.
 func logConnectionInfo(cfg *config.OTELConfig) {
@@ -62,25 +98,20 @@ func InitProvider(cfg *config.OTELConfig, versionInfo string) (*sdktrace.TracerP
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	endpoint := cfg.GetEndpoint()
-
 	// Log OTEL configuration for debugging
 	log.Printf("OTEL Configuration:")
 	log.Printf("  Service Name: %s", cfg.ServiceName)
-	log.Printf("  Endpoint: %s", endpoint)
+	if cfg.JSONFile == "" {
+		log.Printf("  Endpoint: %s", cfg.GetEndpoint())
+	}
 	if cfg.ResourceAttributes != "" {
 		log.Printf("  Resource Attributes: %s", cfg.ResourceAttributes)
 	}
 
-	logConnectionInfo(cfg)
-
-	// Create OTLP trace exporter
-	// Endpoint and TLS options are derived from config; timeout, headers,
-	// compression, and certificates are handled by the library's own env var parsing.
-	opts := cfg.EndpointOptions()
-	exporter, err := otlptracehttp.New(ctx, opts...)
+	// Create the span exporter (OTLP JSON file or OTLP/HTTP network).
+	exporter, err := newExporter(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+		return nil, err
 	}
 
 	// Build resource attributes

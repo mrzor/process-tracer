@@ -136,13 +136,10 @@ func DetectSymlinkMode(mode string) (bool, error) {
 		return false, nil // Can't determine, assume trace mode
 	}
 
-	argsPath := os.Args[0]
-	if !filepath.IsAbs(argsPath) {
-		// Make it absolute
-		argsPath, err = filepath.Abs(argsPath)
-		if err != nil {
-			return false, nil
-		}
+	// Abs also Cleans: an already-absolute argv0 containing ".." must not look like a symlink.
+	argsPath, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		return false, nil
 	}
 
 	// Resolve symlinks for os.Args[0]

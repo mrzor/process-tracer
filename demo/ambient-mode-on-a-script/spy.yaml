@@ -1,0 +1,13 @@
+# Template: spy.sh substitutes @COMM@ (kernel comm of $SPY_TARGET) and writes the result to a temp file.
+rules:
+  - name: "spy-target"
+    match:
+      command: "@COMM@"
+    # debug.argv + debug.environ on spans: contains your full env. Keep the output local.
+    add_debug_attributes: true
+    attributes:
+      service.name: "spy-target"
+limits:
+  max_pids_per_session: 10240
+  max_total_pids: 10240   # BPF map ceiling
+  session_timeout: 5m

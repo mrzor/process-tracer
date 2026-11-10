@@ -28,17 +28,17 @@
 # mitmproxy here is watching the telemetry pipeline, not the workload traffic.
 #
 # Usage:
-#   scripts/demo.sh          # build layout and attach
-#   scripts/demo.sh stop     # tear the session down
-#   scripts/demo.sh run      # (from the runner pane) re-run tracer+workload
-#   PT_DEMO_NO_ATTACH=1 scripts/demo.sh   # set up detached (don't attach)
+#   demo/direct-mode/demo.sh          # build layout and attach
+#   demo/direct-mode/demo.sh stop     # tear the session down
+#   demo/direct-mode/demo.sh run      # (from the runner pane) re-run tracer+workload
+#   PT_DEMO_NO_ATTACH=1 demo/direct-mode/demo.sh   # set up detached (don't attach)
 #
 # Env overrides: PT_DEMO_SESSION, PT_MITM_PORT, PT_OTLP_PORT, PT_OTLP_GRPC_PORT.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
 # --- Configuration (deterministic so every re-entry agrees) ------------------
@@ -47,7 +47,7 @@ OTLP_HTTP_PORT="${PT_OTLP_PORT:-4318}"        # otel-tui HTTP OTLP receiver
 OTLP_GRPC_PORT="${PT_OTLP_GRPC_PORT:-4317}"   # otel-tui gRPC OTLP receiver
 MITM_PORT="${PT_MITM_PORT:-8080}"             # mitmproxy reverse-proxy listen port
 PT_BIN="$REPO_ROOT/process-tracer"
-WORKLOAD="$REPO_ROOT/test_workload.sh"
+WORKLOAD="$SCRIPT_DIR/test_workload.sh"
 
 log()  { printf '\033[1;36m[demo]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[demo] WARN:\033[0m %s\n' "$*" >&2; }

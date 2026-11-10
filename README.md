@@ -255,7 +255,7 @@ At least one of `command` or `is_container_init` is required per rule.
 Setting `skip_empty_values: true` on a rule omits any attribute whose value evaluates to an
 empty string. This is the ambient equivalent of `--skip-empty-values` in direct mode, and is
 useful when some environment variables are only present conditionally (e.g. CI merge-request
-or deployment variables). See `ambient.example.yaml` and `ambient-gitlab-ci.example.yaml`
+or deployment variables). See `demo/ambient-mode-on-a-container/ambient.example.yaml` and `demo/ambient-mode-on-a-container/ambient-gitlab-ci.example.yaml`
 for examples.
 
 ## Values and Expressions

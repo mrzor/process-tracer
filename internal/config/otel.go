@@ -136,6 +136,11 @@ func (c *OTELConfig) EndpointOptions() []otlptracehttp.Option {
 	// Otherwise use WithEndpoint for bare host:port.
 	if strings.HasPrefix(endpoint, "http://") || strings.HasPrefix(endpoint, "https://") {
 		opts = append(opts, otlptracehttp.WithEndpointURL(endpoint))
+		// otel >= 1.47 sends a path-less URL to "/" instead of the default
+		// signal path; restore the previous default.
+		if u, err := url.Parse(endpoint); err == nil && u.Path == "" {
+			opts = append(opts, otlptracehttp.WithURLPath("/v1/traces"))
+		}
 	} else {
 		opts = append(opts, otlptracehttp.WithEndpoint(endpoint))
 	}

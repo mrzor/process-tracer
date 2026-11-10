@@ -47,6 +47,7 @@ linters:
       - path: _test\.go
         linters:
           - dupl
+          - goconst
           - gosec
           - gocyclo
           - revive
@@ -114,6 +115,9 @@ linters:
     goconst:
       min-len: 3
       min-occurrences: 3
+      # expr environment keys, repeated by design
+      ignore-string-values:
+        - "^(env|args|cmdline)$"
 
     misspell:
       locale: US
